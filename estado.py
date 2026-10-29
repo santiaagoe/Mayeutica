@@ -7,6 +7,7 @@ nada de LLMs ni de MCP: es el "árbitro" que las herramientas consultan.
 """
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 
 INTENTOS_PREV_NECESARIOS = 1 #cantidad de intentos minimos para dar una pista
 NIVEL_MAXIMO = 4  # 1: pregunta, 2: concepto, 3: pseudocódigo, 4: firma.
@@ -94,13 +95,21 @@ class SesionTarea:
 
         Args:
             ruta_tarea: Ruta al JSON de la tarea. Debe contener una lista de
-                subobjetivos, cada uno con "id" y "descripcion".
+            subobjetivos, cada uno con "id" y "descripcion".
 
         Raises:
             FileNotFoundError: Si el archivo no existe.
             ValueError: Si dos subobjetivos tienen el mismo id.
         """
-        ...
+        with open(ruta_tarea, encoding="utf-8") as f:
+            datos = json.load(f)
+        subs = {} #los subobjetivos
+        for s in datos["subobjetivos"]:    
+            subobjetivo = Subobjetivo(s["id"],s["descripcion"])
+            if (subobjetivo.id in subs):
+                raise ValueError(f"El id: {subobjetivo.id} está repetido")
+            subs[subobjetivo.id] = subobjetivo
+        self.subobjetivos = subs   
 
     def registrar_intento(self, subobjetivo_id: str, codigo: str,
                           resultado_tests: str | None = None) -> Intento:
