@@ -5,7 +5,7 @@ Este módulo lleva el registro de lo que el estudiante ha hecho en una tarea
 (intentos y pistas recibidas) y decide qué pistas están permitidas. No sabe
 nada de LLMs ni de MCP: es el "árbitro" que las herramientas consultan.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import datetime
 import json
 
@@ -154,7 +154,23 @@ class SesionTarea:
             Una tupla (permitido, mensaje). Si permitido es False, el mensaje
             explica por qué, en un tono que el LLM pueda mostrar al estudiante.
         """
-        ...
+        subobjetivo = self.subobjetivos[subobjetivo_id]
+        if (subobjetivo.completado): #4
+            return (False, "El subobjetivo está completado")
+        
+        if ((nivel - subobjetivo.nivel_pista_desbloqueado) != 1 or nivel > NIVEL_MAXIMO ): #1
+            return (False, "No se puede pedir pista porque se salta niveles o excede el nivel máximo")
+        if (nivel == 1): #2
+            if  (len(subobjetivo.intentos)< INTENTOS_PREV_NECESARIOS):
+                return (False, "No tiene los intentos necesarios")
+            else: 
+                return (True, "")
+        else:
+            if(subobjetivo.hay_intento_desde_ultima_pista()):
+                return (True, "")
+            else: 
+                return (False, "No hay intento previo desde la última pista")
+
 
     def registrar_pista_entregada(self, subobjetivo_id: str, nivel: int) -> None:
         """Anota que se entregó una pista, para que las reglas la tomen en cuenta.
@@ -167,12 +183,24 @@ class SesionTarea:
             subobjetivo_id: Id del subobjetivo.
             nivel: Nivel de la pista entregada.
         """
-        ...
+        subobjetivo = self.subobjetivos[subobjetivo_id]
+        subobjetivo.nivel_pista_desbloqueado = nivel
+        subobjetivo.fecha_ultima_pista = datetime.now()
 
     def guardar(self, ruta: str) -> None:
         """Escribe el estado completo de la sesión en disco.
 
         Args:
             ruta: Archivo donde guardar el estado.
-        """
-        ...
+        """   
+        subs_dict = {}
+        for clave, subobjetivo in self.subobjetivos.items():
+            subs_dict[clave] = asdict(subobjetivo)
+            
+        datos = {
+            "subobjetivos": subs_dict
+        }
+
+        #default=str convierte a texto 
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(datos, f, ensure_ascii=False, indent=2, default=str)
