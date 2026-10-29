@@ -126,7 +126,14 @@ class SesionTarea:
         Raises:
             KeyError: Si no existe un subobjetivo con ese id.
         """
-        ...
+        
+        if (subobjetivo_id not in self.subobjetivos):
+            raise KeyError(f"No existe subobjetivo con el id: {subobjetivo_id}.")
+
+        intento_creado = Intento(subobjetivo_id, codigo, resultado_tests)
+        subobjetivo = self.subobjetivos[subobjetivo_id]
+        subobjetivo.intentos.append(intento_creado)
+        return intento_creado
 
     def puede_pedir_pista(self, subobjetivo_id: str, nivel: int) -> tuple[bool, str]:
         """Decide si el estudiante puede recibir una pista de cierto nivel.
