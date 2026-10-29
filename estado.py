@@ -44,14 +44,14 @@ class Subobjetivo:
         descripcion: Qué tiene que lograr el estudiante en este paso.
         nivel_pista_desbloqueado: Última pista entregada (0 si no ha recibido ninguna).
         completado: True si el estudiante ya resolvió este paso.
-        fecha_ultima_pista: Se usa para ver si hubo un intento después de esta
-         intentos: Todos los intentos registrados, en orden cronológico.
+        intentos_al_entregar_pista: Cantidad de intentos que había cuando se entregó la última pista.
+        intentos: Todos los intentos registrados, en orden cronológico.
     """    
     id : str
     descripcion: str
     nivel_pista_desbloqueado: int = 0 #parte sin pistas
     completado: bool = False #parte sin completar
-    fecha_ultima_pista : datetime | None = None
+    intentos_al_entregar_pista : int = 0
     intentos : list[Intento] = field(default_factory=list) #los intentos de este subobjetivo
     
     def hay_intento_previo(self) -> bool:
@@ -72,12 +72,7 @@ class Subobjetivo:
         """
         if (self.nivel_pista_desbloqueado <= 0):
             return self.hay_intento_previo()
-        if (self.hay_intento_previo()):
-            ultimo = self.intentos[-1]
-            return  (ultimo.fecha > self.fecha_ultima_pista)
-        else:
-            return False
-
+        return len(self.intentos) > self.intentos_al_entregar_pista
         
 
 class SesionTarea:
@@ -185,7 +180,7 @@ class SesionTarea:
         """
         subobjetivo = self.subobjetivos[subobjetivo_id]
         subobjetivo.nivel_pista_desbloqueado = nivel
-        subobjetivo.fecha_ultima_pista = datetime.now()
+        subobjetivo.intentos_al_entregar_pista = len(subobjetivo.intentos)
 
     def guardar(self, ruta: str) -> None:
         """Escribe el estado completo de la sesión en disco.
