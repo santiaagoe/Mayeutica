@@ -1,0 +1,8 @@
+{
+  "titulo": "Tarea de ejemplo: neurona con activación sigmoide",
+  "subobjetivos": [
+    {"id": "sigmoide", "descripcion": "Implementar la función sigmoide"},
+    {"id": "derivada", "descripcion": "Implementar la derivada de la sigmoide"},
+    {"id": "forward", "descripcion": "Calcular la salida de la neurona con np.dot y la sigmoide"}
+  ]
+}
