@@ -1,5 +1,6 @@
 from mcp.server.mcpserver import MCPServer
 from estado import SesionTarea
+from ejecutor import correr_pytest, ResultadoTests
 
 mcp = MCPServer("mayeutica")
 sesion: SesionTarea | None = None
@@ -92,5 +93,48 @@ def marcar_completado(subobjetivo_id: str) -> str:
         return f"El subobjetivo {subobjetivo_id} ya estaba completado"
     
         
+@mcp.tool()
+def ejecutar_tests(subobjetivo_id: str) -> str:
+    """Corre los tests de un subobjetivo sobre el código que el estudiante tiene en su archivo.
+
+    Úsala cuando el estudiante diga que quiere probar su código. Lee el archivo
+    real del estudiante (no recibe código como texto) y corre sus tests en el
+    servidor. Cada ejecución se registra como un intento, con la salida real de
+    pytest. Si todos los tests pasan, el subobjetivo queda completado.
+
+    Returns:
+        Si pasaron o no, y la salida de pytest para que el estudiante vea qué
+        falló. O un mensaje si no hay tarea cargada, el id no existe, el
+        subobjetivo no tiene archivo o tests configurados, o el archivo del
+        estudiante no existe.
+    """
+    if sesion is None:
+        return "No hay tarea cargada"
+        
+    if subobjetivo_id not in sesion.subobjetivos:
+        return f"No existe el subobjetivo: {subobjetivo_id}"
+        
+    subobjetivo = sesion.subobjetivos[subobjetivo_id]
+    
+    if not subobjetivo.archivo or not subobjetivo.tests:
+        return f"El subobjetivo '{subobjetivo_id}' no tiene archivo o tests configurados."
+        
+    try:
+        with open(subobjetivo.archivo, "r", encoding="utf-8") as f:
+            codigo = f.read()
+    except FileNotFoundError:
+        return f"No se encontró el archivo del estudiante en la ruta esperada: {subobjetivo.archivo}"
+        
+    resultado = correr_pytest(subobjetivo.tests)
+    sesion.registrar_intento(subobjetivo_id, codigo, resultado.salida)
+    if resultado.paso:
+        sesion.marcar_completado(subobjetivo_id)
+        return (f"Los tests del subobjetivo {subobjetivo_id} fueron aprobados.\n\n"
+            f"Salida de pytest:\n\n{resultado.salida}")
+    else:
+        return( f"Los tests del subobjetivo {subobjetivo_id} fallaron.\n\n"
+            f"Salida de pytest:\n\n{resultado.salida}")
+
+
 if __name__ == "__main__":
     mcp.run()

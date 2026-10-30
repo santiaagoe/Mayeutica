@@ -7,6 +7,7 @@ nada de LLMs ni de MCP: es el "árbitro" que las herramientas consultan.
 """
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
+from pathlib import Path
 import json
 
 INTENTOS_PREV_NECESARIOS = 1 #cantidad de intentos minimos para dar una pista
@@ -46,6 +47,10 @@ class Subobjetivo:
         completado: True si el estudiante ya resolvió este paso.
         intentos_al_entregar_pista: Cantidad de intentos que había cuando se entregó la última pista.
         intentos: Todos los intentos registrados, en orden cronológico.
+        archivo: Ruta absoluta al archivo con el código del estudiante para este
+            subobjetivo, o None si la tarea no la indica.
+        tests: Ruta absoluta al archivo de tests de este subobjetivo, o None si
+            la tarea no la indica.
     """    
     id : str
     descripcion: str
@@ -53,6 +58,8 @@ class Subobjetivo:
     completado: bool = False #parte sin completar
     intentos_al_entregar_pista : int = 0
     intentos : list[Intento] = field(default_factory=list) #los intentos de este subobjetivo
+    archivo: str | None = None
+    tests: str | None = None
     
     def hay_intento_previo(self) -> bool:
         """Indica si el estudiante ha registrado al menos un intento.
@@ -90,21 +97,42 @@ class SesionTarea:
 
         Args:
             ruta_tarea: Ruta al JSON de la tarea. Debe contener una lista de
-            subobjetivos, cada uno con "id" y "descripcion".
+            subobjetivos, cada uno con "id" y "descripcion". Cada uno puede
+            traer además "archivo" y "tests" (opcionales). Si son rutas
+            relativas, se interpretan desde la carpeta donde está el JSON, no
+            desde el directorio actual, y se guardan como rutas absolutas.
 
         Raises:
             FileNotFoundError: Si el archivo no existe.
             ValueError: Si dos subobjetivos tienen el mismo id.
         """
-        with open(ruta_tarea, encoding="utf-8") as f:
+        ruta_absoluta_json = Path(ruta_tarea).resolve()
+        directorio_base = ruta_absoluta_json.parent
+        with open(ruta_absoluta_json, encoding="utf-8") as f:
             datos = json.load(f)
-        subs = {} #los subobjetivos
-        for s in datos["subobjetivos"]:    
-            subobjetivo = Subobjetivo(s["id"],s["descripcion"])
-            if (subobjetivo.id in subs):
+        def resolver_ruta(ruta: str | None) -> str | None:
+            if not ruta:
+                return None
+            p = Path(ruta)
+            return str(p if p.is_absolute() else (directorio_base / p).resolve())
+
+        subs = {}
+        for s in datos["subobjetivos"]:
+            archivo = resolver_ruta(s.get("archivo"))
+            tests = resolver_ruta(s.get("tests"))
+
+            subobjetivo = Subobjetivo(
+                id=s["id"],
+                descripcion=s["descripcion"],
+                archivo=archivo,
+                tests=tests
+            )
+            
+            if subobjetivo.id in subs:
                 raise ValueError(f"El id: {subobjetivo.id} está repetido")
             subs[subobjetivo.id] = subobjetivo
-        self.subobjetivos = subs   
+            
+        self.subobjetivos = subs
 
     def registrar_intento(self, subobjetivo_id: str, codigo: str,
                           resultado_tests: str | None = None) -> Intento:

@@ -261,3 +261,113 @@ def test_completar_despues_no_hay_pistas(con_tarea):
     server.marcar_completado("sigmoide")
     server.pedir_pista("sigmoide", 1)
     assert con_tarea.subobjetivos["sigmoide"].nivel_pista_desbloqueado == 0
+
+
+# ---------------------------------------------------------------------------
+# ejecutar_tests
+# ---------------------------------------------------------------------------
+
+CODIGO_BIEN = "import math\n\ndef sigmoide(x):\n    return 1 / (1 + math.exp(-x))\n"
+CODIGO_MAL = "def sigmoide(x):\n    return x\n"
+TESTS_SIGMOIDE = "from sigmoide import sigmoide\n\ndef test_cero():\n    assert sigmoide(0) == 0.5\n"
+
+
+@pytest.fixture
+def tarea_con_tests(tmp_path):
+    """Carga una tarea donde 'sigmoide' tiene archivo y tests, y 'derivada' no.
+
+    Devuelve la ruta del archivo del estudiante para que cada test escriba en
+    él el código que necesita. Empieza con código que no pasa.
+    """
+    (tmp_path / "test_sigmoide.py").write_text(TESTS_SIGMOIDE, encoding="utf-8")
+    archivo = tmp_path / "sigmoide.py"
+    archivo.write_text(CODIGO_MAL, encoding="utf-8")
+    ruta = escribir_tarea(tmp_path / "tarea.json", [
+        {"id": "sigmoide", "descripcion": "Implementar la sigmoide",
+         "archivo": "sigmoide.py", "tests": "test_sigmoide.py"},
+        {"id": "derivada", "descripcion": "Implementar la derivada"},
+    ])
+    server.cargar_tarea(ruta)
+    return archivo
+
+
+def test_ejecutar_esta_registrada_en_el_servidor():
+    nombres = {h.name for h in asyncio.run(server.mcp.list_tools())}
+    assert "ejecutar_tests" in nombres
+
+
+def test_ejecutar_sin_tarea_no_lanza_error():
+    respuesta = server.ejecutar_tests("sigmoide")
+    assert isinstance(respuesta, str)
+    assert "tarea" in respuesta.lower()
+
+
+def test_ejecutar_id_inexistente_no_lanza_error(tarea_con_tests):
+    respuesta = server.ejecutar_tests("no_existe")
+    assert isinstance(respuesta, str)
+    assert "no_existe" in respuesta
+
+
+def test_ejecutar_sin_tests_configurados_no_registra_intento(tarea_con_tests):
+    respuesta = server.ejecutar_tests("derivada")
+    assert isinstance(respuesta, str)
+    assert server.sesion.subobjetivos["derivada"].intentos == []
+
+
+def test_ejecutar_archivo_del_estudiante_inexistente(tarea_con_tests):
+    tarea_con_tests.unlink()
+    respuesta = server.ejecutar_tests("sigmoide")
+    assert isinstance(respuesta, str)
+    assert server.sesion.subobjetivos["sigmoide"].intentos == []
+
+
+def test_ejecutar_registra_el_codigo_real_como_intento(tarea_con_tests):
+    server.ejecutar_tests("sigmoide")
+    intentos = server.sesion.subobjetivos["sigmoide"].intentos
+    assert len(intentos) == 1
+    assert intentos[0].codigo == CODIGO_MAL
+
+
+def test_ejecutar_guarda_la_salida_real_de_pytest(tarea_con_tests):
+    server.ejecutar_tests("sigmoide")
+    resultado = server.sesion.subobjetivos["sigmoide"].intentos[0].resultado_tests
+    assert resultado is not None
+    assert "failed" in resultado
+
+
+def test_ejecutar_falla_no_completa_y_muestra_la_salida(tarea_con_tests):
+    respuesta = server.ejecutar_tests("sigmoide")
+    assert "failed" in respuesta  # el estudiante necesita ver qué falló
+    assert server.sesion.subobjetivos["sigmoide"].completado is False
+
+
+def test_ejecutar_pasa_y_completa(tarea_con_tests):
+    tarea_con_tests.write_text(CODIGO_BIEN, encoding="utf-8")
+    respuesta = server.ejecutar_tests("sigmoide")
+    assert isinstance(respuesta, str)
+    assert server.sesion.subobjetivos["sigmoide"].completado is True
+    assert server.sesion.subobjetivos["derivada"].completado is False
+
+
+def test_ejecutar_lee_el_archivo_cada_vez(tarea_con_tests):
+    """Si el estudiante edita su archivo, la siguiente ejecución usa la versión nueva."""
+    server.ejecutar_tests("sigmoide")
+    tarea_con_tests.write_text(CODIGO_BIEN, encoding="utf-8")
+    server.ejecutar_tests("sigmoide")
+    intentos = server.sesion.subobjetivos["sigmoide"].intentos
+    assert [i.codigo for i in intentos] == [CODIGO_MAL, CODIGO_BIEN]
+    assert server.sesion.subobjetivos["sigmoide"].completado is True
+
+
+def test_ejecutar_cuenta_como_intento_para_las_pistas(tarea_con_tests):
+    server.ejecutar_tests("sigmoide")
+    server.pedir_pista("sigmoide", 1)
+    assert server.sesion.subobjetivos["sigmoide"].nivel_pista_desbloqueado == 1
+
+
+def test_ejecutar_otra_vez_ya_completado_no_lanza_error(tarea_con_tests):
+    tarea_con_tests.write_text(CODIGO_BIEN, encoding="utf-8")
+    server.ejecutar_tests("sigmoide")
+    respuesta = server.ejecutar_tests("sigmoide")
+    assert isinstance(respuesta, str)
+    assert server.sesion.subobjetivos["sigmoide"].completado is True

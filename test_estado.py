@@ -370,3 +370,34 @@ def test_completar_se_guarda_en_disco(sesion, tmp_path):
     datos = json.loads(ruta.read_text(encoding="utf-8"))
     assert datos["subobjetivos"]["sigmoide"]["completado"] is True
     assert datos["subobjetivos"]["derivada"]["completado"] is False
+
+
+# ---------------------------------------------------------------------------
+# Carga de "archivo" y "tests" (para ejecutar_tests)
+# ---------------------------------------------------------------------------
+
+def test_carga_sin_archivo_ni_tests_deja_none(sesion):
+    sub = sesion.subobjetivos["sigmoide"]
+    assert sub.archivo is None
+    assert sub.tests is None
+
+
+def test_carga_rutas_relativas_desde_la_carpeta_del_json(tmp_path, monkeypatch):
+    carpeta = tmp_path / "tarea"
+    carpeta.mkdir()
+    ruta = carpeta / "tarea.json"
+    escribir_tarea(ruta, [{"id": "sigmoide", "descripcion": "x",
+                           "archivo": "sigmoide.py", "tests": "test_sigmoide.py"}])
+    monkeypatch.chdir(tmp_path)  # el directorio actual NO es la carpeta del JSON
+    sub = SesionTarea(str(ruta)).subobjetivos["sigmoide"]
+    assert sub.archivo == str(carpeta / "sigmoide.py")
+    assert sub.tests == str(carpeta / "test_sigmoide.py")
+
+
+def test_carga_rutas_absolutas_se_respetan(tmp_path):
+    otra = tmp_path / "otra" / "sigmoide.py"
+    ruta = tmp_path / "tarea.json"
+    escribir_tarea(ruta, [{"id": "sigmoide", "descripcion": "x", "archivo": str(otra)}])
+    sub = SesionTarea(str(ruta)).subobjetivos["sigmoide"]
+    assert sub.archivo == str(otra)
+    assert sub.tests is None
