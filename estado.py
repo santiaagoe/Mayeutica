@@ -13,6 +13,112 @@ import json
 INTENTOS_PREV_NECESARIOS = 1 #cantidad de intentos minimos para dar una pista
 NIVEL_MAXIMO = 4  # 1: pregunta, 2: concepto, 3: pseudocódigo, 4: firma.
 
+# Intentos fallidos en un mismo subobjetivo a partir de los cuales se permite
+# entregar el código (momento "rescate").
+FALLOS_PARA_RESCATE = 3
+
+# Tabla de momentos del ciclo: qué debe y qué no puede hacer el tutor en cada
+# uno. Es el texto que el servidor le entrega al LLM como instrucción. Las
+# claves son fijas (las devuelven momento_inicial y momento_revision) y no
+# llevan tildes; los textos sí, porque los lee una persona (o el LLM).
+MOMENTOS: dict[str, dict[str, str]] = {
+    "diagnostico": {
+        "permitido": (
+            "Hazle al estudiante dos preguntas rápidas de sí o no sobre este "
+            "subobjetivo: si maneja la teoría y si sabe implementarlo en código. "
+            "Confía en lo que responda y llama a registrar_diagnostico con sus "
+            "respuestas."
+        ),
+        "prohibido": (
+            "No expliques teoría ni muestres código antes de tener sus respuestas. "
+            "No le tomes una prueba: la encuesta debe ser rápida."
+        ),
+    },
+    "teoria": {
+        "permitido": (
+            "Explica brevemente la teoría que necesita este subobjetivo, con un "
+            "ejemplo o una intuición si ayuda, y comprueba con una pregunta corta "
+            "si quedó clara. Si el estudiante dijo que maneja la teoría, dala por "
+            "sabida, pero explícala igual si pregunta o si se nota que le falta un "
+            "concepto."
+        ),
+        "prohibido": (
+            "No escribas código de la solución. No des una clase larga ni le "
+            "impongas una explicación de algo que dijo saber si no la pide."
+        ),
+    },
+    "ejemplo": {
+        "permitido": (
+            "Muestra la implementación oficial del ejemplo de este subobjetivo y "
+            "explica brevemente cómo funciona y qué hace cada parte. Luego dile "
+            "que su tarea es adaptarla a su propio caso."
+        ),
+        "prohibido": (
+            "No adaptes el ejemplo al caso del estudiante: esa adaptación es su "
+            "tarea. No inventes una implementación si la tarea no trae un ejemplo; "
+            "avísale que falta."
+        ),
+    },
+    "duda_especifica": {
+        "permitido": (
+            "El estudiante dice manejar la teoría y el código. Pregúntale cuál es "
+            "su duda concreta y ayúdalo solo en eso."
+        ),
+        "prohibido": (
+            "No recorras el ciclo completo (teoría, ejemplo) si no lo pide. No "
+            "escribas la solución."
+        ),
+    },
+    "revision_conceptual": {
+        "permitido": (
+            "El estudiante falló una vez. Explica qué concepto o idea está "
+            "fallando y por qué, a partir de la salida de los tests. Puedes "
+            "hacerle una pregunta que lo lleve a encontrar el error."
+        ),
+        "prohibido": (
+            "No digas en qué línea está el error. No escribas código, ni la "
+            "corrección ni un fragmento de ella."
+        ),
+    },
+    "revision_explicita": {
+        "permitido": (
+            "El estudiante ya falló más de una vez. Dile dónde está el error (la "
+            "función o la línea) y qué está mal en concreto, comparando lo que "
+            "hace su código con lo que debería hacer."
+        ),
+        "prohibido": (
+            "No escribas la línea corregida ni la solución completa: el arreglo "
+            "lo tiene que escribir él."
+        ),
+    },
+    "rescate": {
+        "permitido": (
+            "El estudiante llegó al límite de intentos fallidos. Entrégale el "
+            "código de este subobjetivo, explica qué hace cada parte y en qué "
+            "estaba fallando su versión. Al final, hazle una pregunta breve de "
+            "comprensión que pida explicar, por ejemplo: 'explica en una frase qué "
+            "hace esta línea' o '¿qué pasaría si cambias X?'."
+        ),
+        "prohibido": (
+            "No entregues el código sin explicarlo. No cierres con '¿entendiste?' "
+            "ni con otra pregunta de sí o no. No marques el subobjetivo como "
+            "completado: igual tiene que pasar los tests."
+        ),
+    },
+    "resultados": {
+        "permitido": (
+            "El estudiante pregunta por los resultados (por ejemplo, de un modelo "
+            "de ML). Guíalo con preguntas para que él mismo los interprete y saque "
+            "la conclusión: qué esperaba, qué obtuvo y qué podría explicar la "
+            "diferencia."
+        ),
+        "prohibido": (
+            "No le des la conclusión ni la interpretación final. No cambies su "
+            "código para mejorar los resultados."
+        ),
+    },
+}
+
 @dataclass
 class Intento:
     """Un intento del estudiante de resolver un subobjetivo.
@@ -24,12 +130,15 @@ class Intento:
         codigo: El código que el estudiante escribió en este intento.
         resultado_tests: Salida de los tests sobre este código, o None si no se
             ejecutaron.
+        paso: True si los tests pasaron, False si fallaron, None si no se
+            ejecutaron. Los intentos con False son los que cuentan como fallidos.
         fecha: Momento en que se registró el intento. Se asigna automáticamente.
     """
     subobjetivo_id: str 
     codigo: str
     # Puede ser texto o None. Le damos None como valor por defecto.
     resultado_tests : str | None = None
+    paso: bool | None = None   # True si pasaron los tests, False si fallaron, None si no se corrieron.
     fecha : datetime = field(default_factory=datetime.now)
     
 
@@ -51,6 +160,14 @@ class Subobjetivo:
             subobjetivo, o None si la tarea no la indica.
         tests: Ruta absoluta al archivo de tests de este subobjetivo, o None si
             la tarea no la indica.
+        ejemplo: Ruta absoluta a la implementación oficial que el tutor muestra
+            en el momento "ejemplo", o None si la tarea no la indica.
+        maneja_teoria: Respuesta del diagnóstico sobre la teoría (None si
+            todavía no se preguntó).
+        maneja_codigo: Respuesta del diagnóstico sobre el código (None si
+            todavía no se preguntó).
+        rescatado: True si se le entregó el código al estudiante (momento
+            "rescate"). Es independiente de completado.
     """    
     id : str
     descripcion: str
@@ -60,6 +177,11 @@ class Subobjetivo:
     intentos : list[Intento] = field(default_factory=list) #los intentos de este subobjetivo
     archivo: str | None = None
     tests: str | None = None
+    ejemplo: str | None = None   # Ruta absoluta a la implementación oficial, o None.
+    maneja_teoria: bool | None = None
+    maneja_codigo: bool | None = None
+    rescatado: bool = False
+
     
     def hay_intento_previo(self) -> bool:
         """Indica si el estudiante ha registrado al menos un intento.
@@ -80,6 +202,21 @@ class Subobjetivo:
         if (self.nivel_pista_desbloqueado <= 0):
             return self.hay_intento_previo()
         return len(self.intentos) > self.intentos_al_entregar_pista
+
+    def intentos_fallidos(self) -> int:
+        """Cuenta los intentos cuyos tests fallaron.
+
+        Solo cuentan los intentos con paso False. Los aprobados (True) y los que
+        no corrieron tests (None) no cuentan.
+
+        Returns:
+            Cantidad de intentos fallidos de este subobjetivo.
+        """   
+        fallos = 0
+        for i in self.intentos:
+            if (i.paso == False):
+                fallos += 1
+        return fallos        
         
 
 class SesionTarea:
@@ -98,7 +235,7 @@ class SesionTarea:
         Args:
             ruta_tarea: Ruta al JSON de la tarea. Debe contener una lista de
             subobjetivos, cada uno con "id" y "descripcion". Cada uno puede
-            traer además "archivo" y "tests" (opcionales). Si son rutas
+            traer además "archivo", "tests" y "ejemplo" (opcionales). Si son rutas
             relativas, se interpretan desde la carpeta donde está el JSON, no
             desde el directorio actual, y se guardan como rutas absolutas.
 
@@ -120,12 +257,14 @@ class SesionTarea:
         for s in datos["subobjetivos"]:
             archivo = resolver_ruta(s.get("archivo"))
             tests = resolver_ruta(s.get("tests"))
+            ejemplo = resolver_ruta(s.get("ejemplo"))
 
             subobjetivo = Subobjetivo(
                 id=s["id"],
                 descripcion=s["descripcion"],
                 archivo=archivo,
-                tests=tests
+                tests=tests,
+                ejemplo=ejemplo
             )
             
             if subobjetivo.id in subs:
@@ -135,13 +274,16 @@ class SesionTarea:
         self.subobjetivos = subs
 
     def registrar_intento(self, subobjetivo_id: str, codigo: str,
-                          resultado_tests: str | None = None) -> Intento:
+                          resultado_tests: str | None = None,
+                          paso : bool | None = None) -> Intento:
         """Guarda un nuevo intento del estudiante en el subobjetivo indicado.
 
         Args:
             subobjetivo_id: Id del subobjetivo que el estudiante está intentando.
             codigo: El código del intento.
             resultado_tests: Salida de los tests, si se ejecutaron.
+            paso: True si los tests pasaron, False si fallaron, None si no se
+                ejecutaron.
 
         Returns:
             El intento creado.
@@ -153,7 +295,7 @@ class SesionTarea:
         if (subobjetivo_id not in self.subobjetivos):
             raise KeyError(f"No existe subobjetivo con el id: {subobjetivo_id}.")
 
-        intento_creado = Intento(subobjetivo_id, codigo, resultado_tests)
+        intento_creado = Intento(subobjetivo_id, codigo, resultado_tests, paso)
         subobjetivo = self.subobjetivos[subobjetivo_id]
         subobjetivo.intentos.append(intento_creado)
         return intento_creado
@@ -237,6 +379,144 @@ class SesionTarea:
         return marcar 
         
 
+
+    def registrar_diagnostico(self, subobjetivo_id: str,
+                              maneja_teoria: bool, maneja_codigo: bool) -> None:
+        """Guarda lo que respondió el estudiante en la encuesta inicial.
+
+        Se confía en la respuesta. Si después el tutor nota que no maneja un
+        concepto, igual puede explicarlo (eso lo decide el tutor, no el árbitro).
+
+        Args:
+            subobjetivo_id: Id del subobjetivo.
+            maneja_teoria: True si el estudiante dice que maneja la teoría.
+            maneja_codigo: True si el estudiante dice que sabe implementarlo.
+
+        Raises:
+            KeyError: Si no existe un subobjetivo con ese id.
+        """
+        if (subobjetivo_id not in self.subobjetivos):
+            raise KeyError(f"No existe subobjetivo con el id: {subobjetivo_id}")
+        subobjetivo = self.subobjetivos[subobjetivo_id]
+        subobjetivo.maneja_teoria = maneja_teoria
+        subobjetivo.maneja_codigo = maneja_codigo
+        
+    def momento_inicial(self, subobjetivo_id: str) -> str:
+        """Decide por dónde empieza el ciclo, según el diagnóstico.
+
+        Reglas:
+            - Sin diagnóstico (maneja_teoria es None) -> "diagnostico"
+            - No maneja la teoría (sepa o no el código) -> "teoria"
+            - Maneja la teoría pero no el código -> "ejemplo"
+            - Maneja las dos cosas -> "duda_especifica"
+
+        Args:
+            subobjetivo_id: Id del subobjetivo.
+
+        Returns:
+            El nombre del momento; siempre es una clave de MOMENTOS.
+
+        Raises:
+            KeyError: Si no existe un subobjetivo con ese id.
+        """
+        if (subobjetivo_id not in self.subobjetivos):
+            raise KeyError(f"No existe subobjetivo con el id: {subobjetivo_id}")
+        subobjetivo = self.subobjetivos[subobjetivo_id]
+        maneja_teo = subobjetivo.maneja_teoria 
+        maneja_cod = subobjetivo.maneja_codigo
+        devolver = ""
+        if (maneja_teo is None):
+            devolver = "diagnostico"
+        elif (maneja_teo == False):
+            devolver = "teoria"
+        elif(maneja_cod == False):
+            devolver = "ejemplo"
+        else:
+            devolver = "duda_especifica"
+        return devolver    
+
+
+    def momento_revision(self, subobjetivo_id: str) -> str | None:
+        """Decide qué tan explícita debe ser la revisión, según los intentos fallidos.
+
+        Reglas, en este orden:
+            - Completado -> None (no hay nada que revisar)
+            - 0 intentos fallidos -> None
+            - FALLOS_PARA_RESCATE o más -> "rescate"
+            - 1 fallo -> "revision_conceptual"
+            - Desde 2 fallos hasta antes de FALLOS_PARA_RESCATE -> "revision_explicita"
+
+        Args:
+            subobjetivo_id: Id del subobjetivo.
+
+        Returns:
+            El nombre del momento (una clave de MOMENTOS), o None.
+
+        Raises:
+            KeyError: Si no existe un subobjetivo con ese id.
+        """
+        if (subobjetivo_id not in self.subobjetivos):
+            raise KeyError(f"No existe subobjetivo con el id: {subobjetivo_id}")
+        subobjetivo = self.subobjetivos[subobjetivo_id]
+        if (subobjetivo.completado):
+            return None
+        fallidos = subobjetivo.intentos_fallidos()
+        if (fallidos == 0):
+            return None
+        elif (fallidos == 1):
+            return "revision_conceptual"
+        elif (1 < fallidos < FALLOS_PARA_RESCATE):
+            return "revision_explicita"
+        else:
+            return "rescate"
+
+    def puede_rescatar(self, subobjetivo_id: str) -> tuple[bool, str]:
+        """Decide si se puede entregar el código al estudiante.
+
+        Reglas:
+            1. Si el subobjetivo está completado, no se rescata.
+            2. Debe tener al menos FALLOS_PARA_RESCATE intentos fallidos.
+
+        Args:
+            subobjetivo_id: Id del subobjetivo.
+
+        Returns:
+            Una tupla (permitido, mensaje). Si permitido es False, el mensaje
+            explica por qué, y cada regla tiene su propio mensaje.
+
+        Raises:
+            KeyError: Si no existe un subobjetivo con ese id.
+        """
+        if (subobjetivo_id not in self.subobjetivos):
+            raise KeyError(f"No existe subobjetivo con el id: {subobjetivo_id}")
+        subobjetivo = self.subobjetivos[subobjetivo_id]
+        if (subobjetivo.completado):
+            return (False, f"El subobjetivo {subobjetivo_id} ya está completado")
+        fallidos = subobjetivo.intentos_fallidos()
+        if (fallidos < FALLOS_PARA_RESCATE):
+            return (False, f"Debe tener al menos {FALLOS_PARA_RESCATE} fallos para el rescate")
+        else:
+            return (True, "")
+
+        
+    def registrar_rescate(self, subobjetivo_id: str) -> None:
+        """Anota que se le entregó el código al estudiante.
+
+        Se llama después de que puede_rescatar lo autorizó. No marca el
+        subobjetivo como completado: el estudiante igual tiene que pasar los
+        tests. Sirve para saber después qué subobjetivos conviene repasar.
+
+        Args:
+            subobjetivo_id: Id del subobjetivo.
+
+        Raises:
+            KeyError: Si no existe un subobjetivo con ese id.
+        """
+        if (subobjetivo_id not in self.subobjetivos):
+            raise KeyError(f"No existe subobjetivo con el id: {subobjetivo_id}")
+        subobjetivo = self.subobjetivos[subobjetivo_id]
+        subobjetivo.rescatado = True
+        
     def guardar(self, ruta: str) -> None:
         """Escribe el estado completo de la sesión en disco.
 
