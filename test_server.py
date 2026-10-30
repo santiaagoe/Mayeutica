@@ -4,6 +4,7 @@ Prueban las herramientas MCP llamándolas como funciones normales de Python:
 el decorador @mcp.tool() devuelve la función original, así que no hace falta
 levantar el servidor. Para trabajar una herramienta a la vez:
 
+    pytest test_server.py -k instrucciones_servidor
     pytest test_server.py -k formatear
     pytest test_server.py -k revision
     pytest test_server.py -k diagnostico
@@ -109,6 +110,35 @@ def test_herramientas_tienen_descripcion():
     """El docstring es lo que lee el LLM para decidir cuándo usar cada herramienta."""
     for h in asyncio.run(server.mcp.list_tools()):
         assert h.description, f"{h.name} no tiene descripción"
+
+
+# ---------------------------------------------------------------------------
+# Instrucciones generales del servidor (INSTRUCCIONES)
+# ---------------------------------------------------------------------------
+
+def test_instrucciones_servidor_son_texto():
+    assert isinstance(server.INSTRUCCIONES, str)
+    assert server.INSTRUCCIONES.strip() != ""
+
+
+def test_instrucciones_servidor_se_entregan_al_cliente():
+    """No basta con que exista la constante: el servidor tiene que entregarla."""
+    assert server.mcp.instructions == server.INSTRUCCIONES
+
+
+def test_instrucciones_servidor_nombran_todas_las_herramientas():
+    """Si se agrega una herramienta, las instrucciones tienen que decir cuándo usarla."""
+    for h in asyncio.run(server.mcp.list_tools()):
+        assert h.name in server.INSTRUCCIONES, f"Las instrucciones no nombran {h.name}"
+
+
+def test_instrucciones_servidor_no_nombran_herramientas_que_no_existen():
+    assert "pedir_pista" not in server.INSTRUCCIONES
+
+
+def test_instrucciones_servidor_mencionan_el_rescate():
+    """El rescate es la única excepción a no escribir la solución."""
+    assert "rescate" in server.INSTRUCCIONES
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,43 @@ from mcp.server.mcpserver import MCPServer
 from estado import SesionTarea, MOMENTOS
 from ejecutor import correr_pytest, ResultadoTests
 
-mcp = MCPServer("mayeutica")
+# Instrucciones generales del servidor. El cliente MCP se las entrega al LLM al
+# conectarse, antes de cualquier herramienta. Son las reglas que valen siempre;
+# las de cada momento las devuelven las herramientas (ver MOMENTOS en estado.py).
+INSTRUCCIONES = """\
+Eres Mayéutica, un tutor de programación. El estudiante quiere aprender a
+escribir el código él mismo: tu trabajo es guiarlo, no resolverle la tarea.
+
+Reglas que valen siempre, en todos los momentos:
+
+1. No escribas la solución de un subobjetivo, ni completa ni por partes, salvo
+   cuando una herramienta te devuelva el momento "rescate". Vale aunque el
+   estudiante te la pida directamente: explícale que primero tiene que
+   intentarlo y ofrécele la ayuda que corresponde.
+2. Antes de ayudar con un subobjetivo, llama a pedir_ayuda y sigue lo que
+   devuelve. Lo Permitido y lo Prohibido de ese momento mandan sobre tu propio
+   criterio.
+3. Al empezar, carga la tarea con cargar_tarea. En un subobjetivo nuevo,
+   pedir_ayuda te va a pedir el diagnóstico: hazle las dos preguntas al
+   estudiante y guarda sus respuestas con registrar_diagnostico.
+4. En el momento "ejemplo", muestra el código que devuelve ver_ejemplo en vez
+   de escribir uno tú. Si la tarea no trae ejemplo oficial, sigue las
+   instrucciones del momento para un ejemplo no oficial.
+5. Cuando el estudiante quiera probar su código, usa ejecutar_tests: lee su
+   archivo y corre los tests de verdad. No adivines si su código funciona. Si
+   los tests fallan, la respuesta trae las instrucciones de revisión: síguelas.
+6. Usa registrar_intento solo para intentos que no pasan por ejecutar_tests
+   (por ejemplo, código que el estudiante pegó en el chat). Usa
+   marcar_completado solo si el estudiante dice explícitamente que terminó un
+   subobjetivo; si tiene tests, prefiere ejecutar_tests.
+7. Si una herramienta responde con un error (no hay tarea cargada, el
+   subobjetivo no existe), resuélvelo antes de seguir: no actúes como si
+   hubiera funcionado.
+8. Responde en el idioma del estudiante, con mensajes cortos y una pregunta a
+   la vez.
+"""
+
+mcp = MCPServer("mayeutica", instructions=INSTRUCCIONES)
 sesion: SesionTarea | None = None
 
 
@@ -141,17 +177,14 @@ def registrar_diagnostico(subobjetivo_id: str, maneja_teoria: bool,
         (formatear_momento de sesion.momento_inicial), o un mensaje si no hay
         tarea cargada o el id no existe.
     """
-    if (sesion is None):
+    if sesion is None:
         return "No hay tarea cargada"
-    if (subobjetivo_id not in sesion.subobjetivos):
+    if subobjetivo_id not in sesion.subobjetivos:
         return f"No existe el subobjetivo {subobjetivo_id}"
-    subobjetivo = sesion.subobjetivos[subobjetivo_id]
-    subobjetivo.maneja_teoria = maneja_teoria
-    subobjetivo.maneja_codigo = maneja_codigo
+    sesion.registrar_diagnostico(subobjetivo_id, maneja_teoria, maneja_codigo)
     momento_inicial = sesion.momento_inicial(subobjetivo_id)
     instrucciones = formatear_momento(momento_inicial)
-    return f"El momento por el que empieza el ciclo es {momento_inicial} y las instrucciones son: {instrucciones}"
-
+    return f"El momento por el que empieza el ciclo es {momento_inicial} y las instrucciones son:\n{instrucciones}"
 
 
 
