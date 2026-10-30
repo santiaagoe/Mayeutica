@@ -4,7 +4,10 @@ Cada grupo de tests corresponde a un paso del plan. Para trabajar un paso a la v
 corre solo sus tests con -k, por ejemplo:
 
     pytest -k intento          # paso 1 y 4
-    pytest -k regla_2          # paso 5, regla 2
+    pytest -k completar        # marcar_completado
+
+Las reglas de los momentos del ciclo (diagnóstico, revisión, rescate) están en
+test_momentos.py.
 
 Al principio casi todos van a fallar: eso es lo esperado. Tu trabajo es
 implementar estado.py hasta que pasen.
@@ -15,7 +18,7 @@ from datetime import datetime
 
 import pytest
 
-from estado import INTENTOS_PREV_NECESARIOS, NIVEL_MAXIMO, Intento, SesionTarea
+from estado import Intento, SesionTarea
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +48,7 @@ def sesion(tmp_path):
     return SesionTarea(str(ruta))
 
 
-def con_intentos(sesion, subobjetivo_id, cantidad=INTENTOS_PREV_NECESARIOS):
+def con_intentos(sesion, subobjetivo_id, cantidad=1):
     """Registra la cantidad de intentos indicada y devuelve la sesión."""
     for i in range(cantidad):
         sesion.registrar_intento(subobjetivo_id, f"intento {i}")
@@ -67,7 +70,6 @@ def test_carga_guarda_la_descripcion(sesion):
 def test_subobjetivo_nuevo_parte_vacio(sesion):
     sub = sesion.subobjetivos["sigmoide"]
     assert sub.intentos == []
-    assert sub.nivel_pista_desbloqueado == 0
     assert sub.completado is False
 
 
@@ -130,185 +132,8 @@ def test_registrar_intento_id_inexistente_lanza_error(sesion):
 
 
 # ---------------------------------------------------------------------------
-# Paso 5, regla 1: niveles entre 1 y NIVEL_MAXIMO, sin saltarse ninguno
+# Paso 6: guardar
 # ---------------------------------------------------------------------------
-
-def test_regla_1_nivel_cero_no_permitido(sesion):
-    con_intentos(sesion, "sigmoide")
-    permitido, _ = sesion.puede_pedir_pista("sigmoide", 0)
-    assert permitido is False
-
-
-def test_regla_1_nivel_sobre_el_maximo_no_permitido(sesion):
-    con_intentos(sesion, "sigmoide")
-    permitido, _ = sesion.puede_pedir_pista("sigmoide", NIVEL_MAXIMO + 1)
-    assert permitido is False
-
-
-def test_regla_1_no_se_puede_saltar_un_nivel(sesion):
-    con_intentos(sesion, "sigmoide")
-    permitido, _ = sesion.puede_pedir_pista("sigmoide", 2)
-    assert permitido is False
-
-
-def test_regla_1_no_se_puede_repetir_un_nivel_entregado(sesion):
-    con_intentos(sesion, "sigmoide")
-    sesion.registrar_pista_entregada("sigmoide", 1)
-    sesion.registrar_intento("sigmoide", "otro intento")
-    permitido, _ = sesion.puede_pedir_pista("sigmoide", 1)
-    assert permitido is False
-
-
-# ---------------------------------------------------------------------------
-# Paso 5, regla 2: el nivel 1 exige intentos previos
-# ---------------------------------------------------------------------------
-
-def test_regla_2_sin_intentos_no_hay_pista_1(sesion):
-    permitido, _ = sesion.puede_pedir_pista("sigmoide", 1)
-    assert permitido is False
-
-
-def test_regla_2_con_intentos_suficientes_hay_pista_1(sesion):
-    con_intentos(sesion, "sigmoide")
-    permitido, _ = sesion.puede_pedir_pista("sigmoide", 1)
-    assert permitido is True
-
-
-def test_regla_2_intentos_de_otro_subobjetivo_no_cuentan(sesion):
-    con_intentos(sesion, "derivada")
-    permitido, _ = sesion.puede_pedir_pista("sigmoide", 1)
-    assert permitido is False
-
-
-# ---------------------------------------------------------------------------
-# Paso 5, regla 3: entre una pista y la siguiente tiene que haber un intento
-# ---------------------------------------------------------------------------
-
-def test_regla_3_sin_intento_nuevo_no_hay_siguiente_pista(sesion):
-    con_intentos(sesion, "sigmoide")
-    sesion.registrar_pista_entregada("sigmoide", 1)
-    permitido, _ = sesion.puede_pedir_pista("sigmoide", 2)
-    assert permitido is False
-
-
-def test_regla_3_intentos_anteriores_a_la_pista_no_cuentan(sesion):
-    con_intentos(sesion, "sigmoide", cantidad=3)
-    sesion.registrar_pista_entregada("sigmoide", 1)
-    permitido, _ = sesion.puede_pedir_pista("sigmoide", 2)
-    assert permitido is False
-
-
-def test_regla_3_con_intento_nuevo_hay_siguiente_pista(sesion):
-    con_intentos(sesion, "sigmoide")
-    sesion.registrar_pista_entregada("sigmoide", 1)
-    sesion.registrar_intento("sigmoide", "intento después de la pista 1")
-    permitido, _ = sesion.puede_pedir_pista("sigmoide", 2)
-    assert permitido is True
-
-
-def test_regla_3_recorrido_completo_hasta_el_maximo(sesion):
-    con_intentos(sesion, "sigmoide")
-    for nivel in range(1, NIVEL_MAXIMO + 1):
-        permitido, mensaje = sesion.puede_pedir_pista("sigmoide", nivel)
-        assert permitido is True, f"nivel {nivel}: {mensaje}"
-        sesion.registrar_pista_entregada("sigmoide", nivel)
-        sesion.registrar_intento("sigmoide", f"intento después de la pista {nivel}")
-    permitido, _ = sesion.puede_pedir_pista("sigmoide", NIVEL_MAXIMO + 1)
-    assert permitido is False
-
-
-# ---------------------------------------------------------------------------
-# Paso 5, regla 4: un subobjetivo completado no da más pistas
-# ---------------------------------------------------------------------------
-
-def test_regla_4_completado_no_da_pistas(sesion):
-    con_intentos(sesion, "sigmoide")
-    sesion.subobjetivos["sigmoide"].completado = True
-    permitido, _ = sesion.puede_pedir_pista("sigmoide", 1)
-    assert permitido is False
-
-
-def test_regla_4_completar_uno_no_afecta_a_otro(sesion):
-    con_intentos(sesion, "derivada")
-    sesion.subobjetivos["sigmoide"].completado = True
-    permitido, _ = sesion.puede_pedir_pista("derivada", 1)
-    assert permitido is True
-
-
-# ---------------------------------------------------------------------------
-# Paso 5, regla 5: toda negativa trae un mensaje que explica por qué
-# ---------------------------------------------------------------------------
-
-def _sin_intentos(s):
-    return s, 1
-
-
-def _nivel_saltado(s):
-    return con_intentos(s, "sigmoide"), 3
-
-
-def _sin_intento_nuevo(s):
-    con_intentos(s, "sigmoide")
-    s.registrar_pista_entregada("sigmoide", 1)
-    return s, 2
-
-
-def _completado(s):
-    con_intentos(s, "sigmoide")
-    s.subobjetivos["sigmoide"].completado = True
-    return s, 1
-
-
-@pytest.mark.parametrize("preparar", [_sin_intentos, _nivel_saltado, _sin_intento_nuevo, _completado])
-def test_regla_5_toda_negativa_explica_el_motivo(sesion, preparar):
-    sesion, nivel = preparar(sesion)
-    permitido, mensaje = sesion.puede_pedir_pista("sigmoide", nivel)
-    assert permitido is False
-    assert isinstance(mensaje, str) and mensaje.strip() != ""
-
-
-@pytest.fixture
-def fabrica_sesiones(tmp_path):
-    """Devuelve una función que crea sesiones nuevas e independientes entre sí."""
-    contador = {"n": 0}
-
-    def crear():
-        contador["n"] += 1
-        ruta = tmp_path / f"tarea_{contador['n']}.json"
-        escribir_tarea(ruta, [
-            {"id": "sigmoide", "descripcion": "Implementar la función sigmoide"},
-            {"id": "derivada", "descripcion": "Implementar la derivada de la sigmoide"},
-        ])
-        return SesionTarea(str(ruta))
-
-    return crear
-
-
-def test_regla_5_cada_motivo_tiene_su_propio_mensaje(fabrica_sesiones):
-    """Cada regla da un mensaje distinto, para que el estudiante sepa qué hacer."""
-    mensajes = set()
-    for preparar in [_sin_intentos, _nivel_saltado, _sin_intento_nuevo, _completado]:
-        sesion, nivel = preparar(fabrica_sesiones())
-        _, mensaje = sesion.puede_pedir_pista("sigmoide", nivel)
-        mensajes.add(mensaje)
-    assert len(mensajes) == 4
-
-
-# ---------------------------------------------------------------------------
-# Paso 6: registrar_pista_entregada y guardar
-# ---------------------------------------------------------------------------
-
-def test_registrar_pista_actualiza_el_nivel(sesion):
-    con_intentos(sesion, "sigmoide")
-    sesion.registrar_pista_entregada("sigmoide", 1)
-    assert sesion.subobjetivos["sigmoide"].nivel_pista_desbloqueado == 1
-
-
-def test_registrar_pista_no_afecta_a_otro_subobjetivo(sesion):
-    con_intentos(sesion, "sigmoide")
-    sesion.registrar_pista_entregada("sigmoide", 1)
-    assert sesion.subobjetivos["derivada"].nivel_pista_desbloqueado == 0
-
 
 def test_guardar_crea_el_archivo_con_los_intentos(sesion, tmp_path):
     sesion.registrar_intento("sigmoide", "codigo_unico_123")
@@ -346,21 +171,10 @@ def test_completar_id_inexistente_lanza_keyerror(sesion):
         sesion.marcar_completado("no_existe")
 
 
-def test_completar_bloquea_las_pistas(sesion):
-    """Conecta el método nuevo con la regla 4, que ya está implementada."""
-    con_intentos(sesion, "sigmoide")
-    assert sesion.puede_pedir_pista("sigmoide", 1)[0] is True
-    sesion.marcar_completado("sigmoide")
-    assert sesion.puede_pedir_pista("sigmoide", 1)[0] is False
-
-
-def test_completar_no_borra_intentos_ni_pistas(sesion):
+def test_completar_no_borra_intentos(sesion):
     con_intentos(sesion, "sigmoide", 2)
-    sesion.registrar_pista_entregada("sigmoide", 1)
     sesion.marcar_completado("sigmoide")
-    sub = sesion.subobjetivos["sigmoide"]
-    assert len(sub.intentos) == 2
-    assert sub.nivel_pista_desbloqueado == 1
+    assert len(sesion.subobjetivos["sigmoide"].intentos) == 2
 
 
 def test_completar_se_guarda_en_disco(sesion, tmp_path):

@@ -2,16 +2,14 @@
 """Estado de una sesión de tutoría de Mayéutica.
 
 Este módulo lleva el registro de lo que el estudiante ha hecho en una tarea
-(intentos y pistas recibidas) y decide qué pistas están permitidas. No sabe
-nada de LLMs ni de MCP: es el "árbitro" que las herramientas consultan.
+(diagnóstico, intentos y rescates) y decide en qué momento del ciclo está
+(ver MOMENTOS). No sabe nada de LLMs ni de MCP: es el "árbitro" que las
+herramientas consultan.
 """
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 import json
-
-INTENTOS_PREV_NECESARIOS = 1 #cantidad de intentos minimos para dar una pista
-NIVEL_MAXIMO = 4  # 1: pregunta, 2: concepto, 3: pseudocódigo, 4: firma.
 
 # Intentos fallidos en un mismo subobjetivo a partir de los cuales se permite
 # entregar el código (momento "rescate").
@@ -148,17 +146,15 @@ class Intento:
 
 @dataclass
 class Subobjetivo:
-    """Un paso pequeño de una tarea, con su propio historial de intentos y pistas.
+    """Un paso pequeño de una tarea, con su propio diagnóstico e historial de intentos.
 
-    Cada subobjetivo avanza por los niveles de pista de forma independiente:
-    se puede estar en la pista 3 de uno y no haber pedido ninguna en otro.
+    Cada subobjetivo avanza por el ciclo de forma independiente: se puede estar
+    en el rescate de uno y no haber fallado nunca en otro.
 
     Attributes:
         id: Identificador único dentro de la tarea (por ejemplo, "derivada").
         descripcion: Qué tiene que lograr el estudiante en este paso.
-        nivel_pista_desbloqueado: Última pista entregada (0 si no ha recibido ninguna).
         completado: True si el estudiante ya resolvió este paso.
-        intentos_al_entregar_pista: Cantidad de intentos que había cuando se entregó la última pista.
         intentos: Todos los intentos registrados, en orden cronológico.
         archivo: Ruta absoluta al archivo con el código del estudiante para este
             subobjetivo, o None si la tarea no la indica.
@@ -175,9 +171,7 @@ class Subobjetivo:
     """    
     id : str
     descripcion: str
-    nivel_pista_desbloqueado: int = 0 #parte sin pistas
     completado: bool = False #parte sin completar
-    intentos_al_entregar_pista : int = 0
     intentos : list[Intento] = field(default_factory=list) #los intentos de este subobjetivo
     archivo: str | None = None
     tests: str | None = None
@@ -187,26 +181,6 @@ class Subobjetivo:
     rescatado: bool = False
 
     
-    def hay_intento_previo(self) -> bool:
-        """Indica si el estudiante ha registrado al menos un intento.
-
-        Returns:
-            True si existe al menos un intento en este subobjetivo.
-        """
-        return (len(self.intentos) > 0)
-
-    def hay_intento_desde_ultima_pista(self) -> bool:
-        """Indica si hay un intento registrado después de la última pista entregada.
-
-        Si todavía no se ha entregado ninguna pista, equivale a hay_intento_previo().
-
-        Returns:
-            True si el estudiante volvió a intentar después de recibir la última pista.
-        """
-        if (self.nivel_pista_desbloqueado <= 0):
-            return self.hay_intento_previo()
-        return len(self.intentos) > self.intentos_al_entregar_pista
-
     def intentos_fallidos(self) -> int:
         """Cuenta los intentos cuyos tests fallaron.
 
@@ -227,7 +201,7 @@ class SesionTarea:
     """Una tarea en la que el estudiante está trabajando, de principio a fin.
 
     Es la puerta de entrada que usan las herramientas MCP: todas las consultas
-    y cambios sobre intentos y pistas pasan por aquí.
+    y cambios sobre el diagnóstico, los intentos y los rescates pasan por aquí.
 
     Attributes:
         subobjetivos: Diccionario que asocia el id de cada subobjetivo con su objeto.
@@ -304,64 +278,12 @@ class SesionTarea:
         subobjetivo.intentos.append(intento_creado)
         return intento_creado
 
-    def puede_pedir_pista(self, subobjetivo_id: str, nivel: int) -> tuple[bool, str]:
-        """Decide si el estudiante puede recibir una pista de cierto nivel.
-
-        Reglas, en este orden:
-            1. El nivel debe estar entre 1 y NIVEL_MAXIMO y ser exactamente el
-               siguiente al último entregado (no se pueden saltar niveles).
-            2. Para el nivel 1, debe haber al menos INTENTOS_PREV_NECESARIOS intentos.
-            3. Para el nivel N+1, debe existir un intento posterior a la entrega
-               de la pista N.
-            4. Si el subobjetivo está completado, no se entregan más pistas.
-
-        Args:
-            subobjetivo_id: Id del subobjetivo.
-            nivel: Nivel de pista solicitado.
-
-        Returns:
-            Una tupla (permitido, mensaje). Si permitido es False, el mensaje
-            explica por qué, en un tono que el LLM pueda mostrar al estudiante.
-        """
-        subobjetivo = self.subobjetivos[subobjetivo_id]
-        if (subobjetivo.completado): #4
-            return (False, "El subobjetivo está completado")
-        
-        if ((nivel - subobjetivo.nivel_pista_desbloqueado) != 1 or nivel > NIVEL_MAXIMO ): #1
-            return (False, "No se puede pedir pista porque se salta niveles o excede el nivel máximo")
-        if (nivel == 1): #2
-            if  (len(subobjetivo.intentos)< INTENTOS_PREV_NECESARIOS):
-                return (False, "No tiene los intentos necesarios")
-            else: 
-                return (True, "")
-        else:
-            if(subobjetivo.hay_intento_desde_ultima_pista()):
-                return (True, "")
-            else: 
-                return (False, "No hay intento previo desde la última pista")
-
-
-    def registrar_pista_entregada(self, subobjetivo_id: str, nivel: int) -> None:
-        """Anota que se entregó una pista, para que las reglas la tomen en cuenta.
-
-        Se llama después de que puede_pedir_pista autorizó el nivel y la pista
-        fue entregada. Sin este método, las reglas 1 y 3 no tendrían cómo saber
-        qué pistas ya se dieron.
-
-        Args:
-            subobjetivo_id: Id del subobjetivo.
-            nivel: Nivel de la pista entregada.
-        """
-        subobjetivo = self.subobjetivos[subobjetivo_id]
-        subobjetivo.nivel_pista_desbloqueado = nivel
-        subobjetivo.intentos_al_entregar_pista = len(subobjetivo.intentos)
-
     def marcar_completado(self, subobjetivo_id: str) -> bool:
         """Marca un subobjetivo como completado.
 
         Solo cambia el estado: no decide cuándo un subobjetivo cuenta como
-        resuelto. Una vez completado, la regla 4 de puede_pedir_pista bloquea las
-        pistas de ese subobjetivo.
+        resuelto. Una vez completado, momento_revision devuelve None y
+        puede_rescatar no autoriza el rescate.
 
         Args:
             subobjetivo_id: Id del subobjetivo.
