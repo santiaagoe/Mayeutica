@@ -1,8 +1,23 @@
 {
   "titulo": "Tarea de ejemplo: neurona con activación sigmoide",
   "subobjetivos": [
-    {"id": "sigmoide", "descripcion": "Implementar la función sigmoide"},
-    {"id": "derivada", "descripcion": "Implementar la derivada de la sigmoide"},
-    {"id": "forward", "descripcion": "Calcular la salida de la neurona con np.dot y la sigmoide"}
+    {
+      "id": "sigmoide",
+      "descripcion": "Implementar la función sigmoide",
+      "archivo": "neurona.py",
+      "tests": "test_sigmoide.py"
+    },
+    {
+      "id": "derivada",
+      "descripcion": "Implementar la derivada de la sigmoide",
+      "archivo": "neurona.py",
+      "tests": "test_derivada.py"
+    },
+    {
+      "id": "forward",
+      "descripcion": "Calcular la salida de la neurona con np.dot y la sigmoide",
+      "archivo": "neurona.py",
+      "tests": "test_forward.py"
+    }
   ]
 }
