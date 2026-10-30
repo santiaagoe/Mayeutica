@@ -182,6 +182,33 @@ class SesionTarea:
         subobjetivo.nivel_pista_desbloqueado = nivel
         subobjetivo.intentos_al_entregar_pista = len(subobjetivo.intentos)
 
+    def marcar_completado(self, subobjetivo_id: str) -> bool:
+        """Marca un subobjetivo como completado.
+
+        Solo cambia el estado: no decide cuándo un subobjetivo cuenta como
+        resuelto. Una vez completado, la regla 4 de puede_pedir_pista bloquea las
+        pistas de ese subobjetivo.
+
+        Args:
+            subobjetivo_id: Id del subobjetivo.
+
+        Returns:
+            True si el subobjetivo pasó de no completado a completado; False si
+            ya estaba completado (no es un error, pero quien llama puede avisarlo).
+
+        Raises:
+            KeyError: Si no existe un subobjetivo con ese id.
+        """
+        if (subobjetivo_id not in self.subobjetivos ):
+            raise KeyError(f"No existe subobjetivo con el id: {subobjetivo_id}")
+        subobjetivo = self.subobjetivos[subobjetivo_id]
+        marcar = False
+        if (subobjetivo.completado == False):
+            marcar = True 
+            subobjetivo.completado = True
+        return marcar 
+        
+
     def guardar(self, ruta: str) -> None:
         """Escribe el estado completo de la sesión en disco.
 

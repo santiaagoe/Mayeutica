@@ -217,3 +217,47 @@ def test_pista_flujo_completo_exige_intento_entre_niveles(con_tarea):
     server.registrar_intento("sigmoide", "intento 2")
     server.pedir_pista("sigmoide", 2)          # ahora sí
     assert sub.nivel_pista_desbloqueado == 2
+
+
+# ---------------------------------------------------------------------------
+# marcar_completado
+# ---------------------------------------------------------------------------
+
+def test_completar_esta_registrada_en_el_servidor():
+    nombres = {h.name for h in asyncio.run(server.mcp.list_tools())}
+    assert "marcar_completado" in nombres
+
+
+def test_completar_sin_tarea_no_lanza_error():
+    respuesta = server.marcar_completado("sigmoide")
+    assert isinstance(respuesta, str)
+    assert "tarea" in respuesta.lower()
+
+
+def test_completar_id_inexistente_no_lanza_error(con_tarea):
+    respuesta = server.marcar_completado("no_existe")
+    assert isinstance(respuesta, str)
+    assert "no_existe" in respuesta
+
+
+def test_completar_marca_en_la_sesion(con_tarea):
+    respuesta = server.marcar_completado("sigmoide")
+    assert isinstance(respuesta, str)
+    assert con_tarea.subobjetivos["sigmoide"].completado is True
+    assert con_tarea.subobjetivos["derivada"].completado is False
+
+
+def test_completar_dos_veces_avisa_distinto(con_tarea):
+    """La segunda vez no es un error, pero el mensaje no debería ser idéntico."""
+    primera = server.marcar_completado("sigmoide")
+    segunda = server.marcar_completado("sigmoide")
+    assert isinstance(segunda, str)
+    assert segunda != primera
+    assert con_tarea.subobjetivos["sigmoide"].completado is True
+
+
+def test_completar_despues_no_hay_pistas(con_tarea):
+    server.registrar_intento("sigmoide", "def sigmoide(x): pass")
+    server.marcar_completado("sigmoide")
+    server.pedir_pista("sigmoide", 1)
+    assert con_tarea.subobjetivos["sigmoide"].nivel_pista_desbloqueado == 0

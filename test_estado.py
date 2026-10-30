@@ -316,3 +316,57 @@ def test_guardar_crea_el_archivo_con_los_intentos(sesion, tmp_path):
     sesion.guardar(str(ruta))
     assert ruta.exists()
     assert "codigo_unico_123" in ruta.read_text(encoding="utf-8")
+
+# ---------------------------------------------------------------------------
+# Completar subobjetivos: marcar_completado (pendiente 2)
+# ---------------------------------------------------------------------------
+
+def test_completar_marca_el_subobjetivo(sesion):
+    sesion.marcar_completado("sigmoide")
+    assert sesion.subobjetivos["sigmoide"].completado is True
+
+
+def test_completar_no_afecta_a_otro_subobjetivo(sesion):
+    sesion.marcar_completado("sigmoide")
+    assert sesion.subobjetivos["derivada"].completado is False
+
+
+def test_completar_devuelve_true_la_primera_vez(sesion):
+    assert sesion.marcar_completado("sigmoide") is True
+
+
+def test_completar_dos_veces_devuelve_false_y_sigue_completado(sesion):
+    sesion.marcar_completado("sigmoide")
+    assert sesion.marcar_completado("sigmoide") is False
+    assert sesion.subobjetivos["sigmoide"].completado is True
+
+
+def test_completar_id_inexistente_lanza_keyerror(sesion):
+    with pytest.raises(KeyError):
+        sesion.marcar_completado("no_existe")
+
+
+def test_completar_bloquea_las_pistas(sesion):
+    """Conecta el método nuevo con la regla 4, que ya está implementada."""
+    con_intentos(sesion, "sigmoide")
+    assert sesion.puede_pedir_pista("sigmoide", 1)[0] is True
+    sesion.marcar_completado("sigmoide")
+    assert sesion.puede_pedir_pista("sigmoide", 1)[0] is False
+
+
+def test_completar_no_borra_intentos_ni_pistas(sesion):
+    con_intentos(sesion, "sigmoide", 2)
+    sesion.registrar_pista_entregada("sigmoide", 1)
+    sesion.marcar_completado("sigmoide")
+    sub = sesion.subobjetivos["sigmoide"]
+    assert len(sub.intentos) == 2
+    assert sub.nivel_pista_desbloqueado == 1
+
+
+def test_completar_se_guarda_en_disco(sesion, tmp_path):
+    sesion.marcar_completado("sigmoide")
+    ruta = tmp_path / "estado.json"
+    sesion.guardar(str(ruta))
+    datos = json.loads(ruta.read_text(encoding="utf-8"))
+    assert datos["subobjetivos"]["sigmoide"]["completado"] is True
+    assert datos["subobjetivos"]["derivada"]["completado"] is False

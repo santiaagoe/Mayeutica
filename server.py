@@ -69,5 +69,28 @@ def pedir_pista(subobjetivo_id: str, nivel: int) -> str:
         return motivo        
 
 
+@mcp.tool()
+def marcar_completado(subobjetivo_id: str) -> str:
+    """Marca un subobjetivo como completado cuando el estudiante declara que lo resolvió.
+
+    Úsala solo cuando el estudiante diga explícitamente que terminó ese paso.
+    Después de esto no se entregan más pistas para ese subobjetivo.
+
+    Returns:
+        Confirmación de que quedó completado, un aviso si ya lo estaba, o un
+        mensaje si no hay tarea cargada o el id no existe.
+    """
+    if (sesion is None):
+        return "No hay tarea cargada"
+    if (subobjetivo_id not in sesion.subobjetivos ):
+        return f"No existe subobjetivo con el id: {subobjetivo_id}"
+    subobjetivo = sesion.subobjetivos[subobjetivo_id]
+    if (subobjetivo.completado == False):
+        sesion.marcar_completado(subobjetivo_id)
+        return f"Se marcó como completado el subobjetivo {subobjetivo_id}"
+    else:
+        return f"El subobjetivo {subobjetivo_id} ya estaba completado"
+    
+        
 if __name__ == "__main__":
     mcp.run()
