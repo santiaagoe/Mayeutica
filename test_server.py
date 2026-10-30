@@ -4,9 +4,12 @@ Prueban las herramientas MCP llamándolas como funciones normales de Python:
 el decorador @mcp.tool() devuelve la función original, así que no hace falta
 levantar el servidor. Para trabajar una herramienta a la vez:
 
-    pytest test_server.py -k cargar
-    pytest test_server.py -k registrar
-    pytest test_server.py -k pista
+    pytest test_server.py -k formatear
+    pytest test_server.py -k revision
+    pytest test_server.py -k diagnostico
+    pytest test_server.py -k ayuda
+    pytest test_server.py -k ver_ejemplo
+    pytest test_server.py -k ejecutar
 
 Los tests no exigen frases exactas: revisan que la respuesta sea texto, que no
 se lance una excepción y que el estado de la sesión cambie (o no) como debe.
@@ -18,7 +21,7 @@ import json
 import pytest
 
 import server
-from estado import SesionTarea
+from estado import FALLOS_PARA_RESCATE, MOMENTOS, SesionTarea
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +64,23 @@ def con_tarea(ruta_tarea):
     return server.sesion
 
 
+def fallar(sesion, subobjetivo_id, veces=1):
+    """Registra intentos fallidos directo en la sesión, sin correr pytest."""
+    for _ in range(veces):
+        sesion.registrar_intento(subobjetivo_id, "x = 1", "1 failed", paso=False)
+
+
+def es_momento(respuesta, nombre):
+    """True si la respuesta trae las instrucciones del momento indicado."""
+    return (MOMENTOS[nombre]["permitido"] in respuesta
+            and MOMENTOS[nombre]["prohibido"] in respuesta)
+
+
+def momentos_en(respuesta):
+    """Los momentos cuyas instrucciones aparecen en la respuesta."""
+    return {n for n in MOMENTOS if MOMENTOS[n]["permitido"] in respuesta}
+
+
 # ---------------------------------------------------------------------------
 # Registro en el servidor MCP
 # ---------------------------------------------------------------------------
@@ -68,7 +88,21 @@ def con_tarea(ruta_tarea):
 def test_herramientas_registradas_en_el_servidor():
     herramientas = asyncio.run(server.mcp.list_tools())
     nombres = {h.name for h in herramientas}
-    assert {"cargar_tarea", "registrar_intento", "pedir_pista"} <= nombres
+    assert {"cargar_tarea", "registrar_intento", "registrar_diagnostico",
+            "pedir_ayuda", "ver_ejemplo", "marcar_completado",
+            "ejecutar_tests"} <= nombres
+
+
+def test_pedir_pista_ya_no_existe():
+    """pedir_ayuda la reemplaza: si quedan las dos, el LLM puede usar la vieja."""
+    nombres = {h.name for h in asyncio.run(server.mcp.list_tools())}
+    assert "pedir_pista" not in nombres
+
+
+def test_auxiliares_no_son_herramientas():
+    nombres = {h.name for h in asyncio.run(server.mcp.list_tools())}
+    assert "formatear_momento" not in nombres
+    assert "instrucciones_revision" not in nombres
 
 
 def test_herramientas_tienen_descripcion():
@@ -166,60 +200,6 @@ def test_registrar_id_inexistente_no_lanza_error(con_tarea):
 
 
 # ---------------------------------------------------------------------------
-# pedir_pista
-# ---------------------------------------------------------------------------
-
-def test_pista_sin_tarea_no_lanza_error():
-    respuesta = server.pedir_pista("sigmoide", 1)
-    assert isinstance(respuesta, str)
-    assert "tarea" in respuesta.lower()
-
-
-def test_pista_id_inexistente_no_lanza_error(con_tarea):
-    respuesta = server.pedir_pista("no_existe", 1)
-    assert isinstance(respuesta, str)
-    assert "no_existe" in respuesta
-
-
-def test_pista_negada_muestra_el_motivo_del_arbitro(con_tarea):
-    _, motivo = con_tarea.puede_pedir_pista("sigmoide", 1)  # sin intentos: negada
-    respuesta = server.pedir_pista("sigmoide", 1)
-    assert motivo in respuesta
-
-
-def test_pista_negada_no_registra_nada(con_tarea):
-    server.pedir_pista("sigmoide", 1)
-    assert con_tarea.subobjetivos["sigmoide"].nivel_pista_desbloqueado == 0
-
-
-def test_pista_permitida_menciona_el_nivel(con_tarea):
-    server.registrar_intento("sigmoide", "x = 1")
-    respuesta = server.pedir_pista("sigmoide", 1)
-    assert isinstance(respuesta, str)
-    assert "1" in respuesta
-
-
-def test_pista_permitida_queda_registrada_en_la_misma_llamada(con_tarea):
-    """La regla central: no depende de que el LLM haga una segunda llamada."""
-    server.registrar_intento("sigmoide", "x = 1")
-    server.pedir_pista("sigmoide", 1)
-    assert con_tarea.subobjetivos["sigmoide"].nivel_pista_desbloqueado == 1
-
-
-def test_pista_flujo_completo_exige_intento_entre_niveles(con_tarea):
-    sub = con_tarea.subobjetivos["sigmoide"]
-    server.registrar_intento("sigmoide", "intento 1")
-    server.pedir_pista("sigmoide", 1)
-
-    server.pedir_pista("sigmoide", 2)          # sin intento nuevo: negada
-    assert sub.nivel_pista_desbloqueado == 1
-
-    server.registrar_intento("sigmoide", "intento 2")
-    server.pedir_pista("sigmoide", 2)          # ahora sí
-    assert sub.nivel_pista_desbloqueado == 2
-
-
-# ---------------------------------------------------------------------------
 # marcar_completado
 # ---------------------------------------------------------------------------
 
@@ -256,11 +236,11 @@ def test_completar_dos_veces_avisa_distinto(con_tarea):
     assert con_tarea.subobjetivos["sigmoide"].completado is True
 
 
-def test_completar_despues_no_hay_pistas(con_tarea):
-    server.registrar_intento("sigmoide", "def sigmoide(x): pass")
+def test_completar_despues_no_hay_revision(con_tarea):
+    fallar(con_tarea, "sigmoide")
     server.marcar_completado("sigmoide")
-    server.pedir_pista("sigmoide", 1)
-    assert con_tarea.subobjetivos["sigmoide"].nivel_pista_desbloqueado == 0
+    respuesta = server.pedir_ayuda("sigmoide")
+    assert not es_momento(respuesta, "revision_conceptual")
 
 
 # ---------------------------------------------------------------------------
@@ -359,10 +339,54 @@ def test_ejecutar_lee_el_archivo_cada_vez(tarea_con_tests):
     assert server.sesion.subobjetivos["sigmoide"].completado is True
 
 
-def test_ejecutar_cuenta_como_intento_para_las_pistas(tarea_con_tests):
+def test_ejecutar_registra_si_paso(tarea_con_tests):
     server.ejecutar_tests("sigmoide")
-    server.pedir_pista("sigmoide", 1)
-    assert server.sesion.subobjetivos["sigmoide"].nivel_pista_desbloqueado == 1
+    tarea_con_tests.write_text(CODIGO_BIEN, encoding="utf-8")
+    server.ejecutar_tests("sigmoide")
+    intentos = server.sesion.subobjetivos["sigmoide"].intentos
+    assert [i.paso for i in intentos] == [False, True]
+
+
+def test_ejecutar_falla_cuenta_como_fallo(tarea_con_tests):
+    server.ejecutar_tests("sigmoide")
+    assert server.sesion.subobjetivos["sigmoide"].intentos_fallidos() == 1
+
+
+def test_ejecutar_falla_trae_revision_segun_los_fallos(tarea_con_tests):
+    """Cada fallo sube un escalón: conceptual, explícita, rescate."""
+    esperados = ["revision_conceptual", "revision_explicita", "rescate"]
+    for nombre in esperados:
+        respuesta = server.ejecutar_tests("sigmoide")
+        assert es_momento(respuesta, nombre), f"esperaba {nombre}"
+        assert "failed" in respuesta  # la salida de pytest sigue apareciendo
+
+
+def test_ejecutar_tercer_fallo_registra_rescate(tarea_con_tests):
+    sub = server.sesion.subobjetivos["sigmoide"]
+    for _ in range(FALLOS_PARA_RESCATE - 1):
+        server.ejecutar_tests("sigmoide")
+    assert sub.rescatado is False
+    server.ejecutar_tests("sigmoide")
+    assert sub.rescatado is True
+
+
+def test_ejecutar_pasa_no_trae_instrucciones_de_revision(tarea_con_tests):
+    server.ejecutar_tests("sigmoide")              # un fallo antes
+    tarea_con_tests.write_text(CODIGO_BIEN, encoding="utf-8")
+    respuesta = server.ejecutar_tests("sigmoide")
+    assert momentos_en(respuesta) == set()
+
+
+def test_ejecutar_despues_del_rescate_igual_hay_que_pasar(tarea_con_tests):
+    """El rescate no completa: el estudiante tiene que pasar los tests."""
+    for _ in range(FALLOS_PARA_RESCATE):
+        server.ejecutar_tests("sigmoide")
+    sub = server.sesion.subobjetivos["sigmoide"]
+    assert sub.completado is False
+    tarea_con_tests.write_text(CODIGO_BIEN, encoding="utf-8")
+    server.ejecutar_tests("sigmoide")
+    assert sub.completado is True
+    assert sub.rescatado is True                   # queda anotado para repasar
 
 
 def test_ejecutar_otra_vez_ya_completado_no_lanza_error(tarea_con_tests):
@@ -371,3 +395,290 @@ def test_ejecutar_otra_vez_ya_completado_no_lanza_error(tarea_con_tests):
     respuesta = server.ejecutar_tests("sigmoide")
     assert isinstance(respuesta, str)
     assert server.sesion.subobjetivos["sigmoide"].completado is True
+
+
+# ---------------------------------------------------------------------------
+# formatear_momento
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("nombre", list(MOMENTOS))
+def test_formatear_trae_nombre_y_textos(nombre):
+    texto = server.formatear_momento(nombre)
+    assert isinstance(texto, str)
+    assert nombre in texto
+    assert es_momento(texto, nombre)
+
+
+def test_formatear_no_mezcla_momentos():
+    assert momentos_en(server.formatear_momento("teoria")) == {"teoria"}
+
+
+def test_formatear_nombre_inexistente_lanza_keyerror():
+    with pytest.raises(KeyError):
+        server.formatear_momento("no_existe")
+
+
+# ---------------------------------------------------------------------------
+# instrucciones_revision
+# ---------------------------------------------------------------------------
+
+def test_revision_sin_fallos_es_none(con_tarea):
+    assert server.instrucciones_revision("sigmoide") is None
+
+
+def test_revision_intento_sin_tests_no_cuenta(con_tarea):
+    """Un intento con paso=None (registrar_intento) no es un fallo."""
+    server.registrar_intento("sigmoide", "x = 1")
+    assert server.instrucciones_revision("sigmoide") is None
+
+
+@pytest.mark.parametrize("fallos, nombre", [
+    (1, "revision_conceptual"),
+    (2, "revision_explicita"),
+    (FALLOS_PARA_RESCATE, "rescate"),
+    (FALLOS_PARA_RESCATE + 2, "rescate"),
+])
+def test_revision_segun_fallos(con_tarea, fallos, nombre):
+    fallar(con_tarea, "sigmoide", fallos)
+    texto = server.instrucciones_revision("sigmoide")
+    assert momentos_en(texto) == {nombre}
+
+
+def test_revision_completado_es_none(con_tarea):
+    fallar(con_tarea, "sigmoide", 2)
+    con_tarea.marcar_completado("sigmoide")
+    assert server.instrucciones_revision("sigmoide") is None
+
+
+def test_revision_rescate_queda_registrado(con_tarea):
+    fallar(con_tarea, "sigmoide", FALLOS_PARA_RESCATE)
+    server.instrucciones_revision("sigmoide")
+    assert con_tarea.subobjetivos["sigmoide"].rescatado is True
+
+
+def test_revision_antes_del_rescate_no_registra(con_tarea):
+    fallar(con_tarea, "sigmoide", FALLOS_PARA_RESCATE - 1)
+    server.instrucciones_revision("sigmoide")
+    assert con_tarea.subobjetivos["sigmoide"].rescatado is False
+
+
+def test_revision_rescate_no_autorizado_no_entrega(con_tarea, monkeypatch):
+    """Si puede_rescatar dice que no, se baja a revision_explicita sin anotar.
+
+    Con las reglas actuales de estado.py esto no pasa; el test simula que las
+    dos reglas se desalinean (por ejemplo, si alguien cambia una y no la otra).
+    """
+    fallar(con_tarea, "sigmoide", FALLOS_PARA_RESCATE)
+    monkeypatch.setattr(con_tarea, "puede_rescatar", lambda _id: (False, "no"))
+    texto = server.instrucciones_revision("sigmoide")
+    assert momentos_en(texto) == {"revision_explicita"}
+    assert con_tarea.subobjetivos["sigmoide"].rescatado is False
+
+
+def test_revision_es_por_subobjetivo(con_tarea):
+    fallar(con_tarea, "sigmoide", 2)
+    assert server.instrucciones_revision("derivada") is None
+
+
+# ---------------------------------------------------------------------------
+# registrar_diagnostico
+# ---------------------------------------------------------------------------
+
+def test_diagnostico_sin_tarea_no_lanza_error():
+    respuesta = server.registrar_diagnostico("sigmoide", True, True)
+    assert isinstance(respuesta, str)
+    assert "tarea" in respuesta.lower()
+
+
+def test_diagnostico_id_inexistente_no_lanza_error(con_tarea):
+    respuesta = server.registrar_diagnostico("no_existe", True, True)
+    assert isinstance(respuesta, str)
+    assert "no_existe" in respuesta
+
+
+def test_diagnostico_guarda_en_la_sesion(con_tarea):
+    server.registrar_diagnostico("sigmoide", True, False)
+    sub = con_tarea.subobjetivos["sigmoide"]
+    assert sub.maneja_teoria is True
+    assert sub.maneja_codigo is False
+
+
+def test_diagnostico_no_afecta_a_otro_subobjetivo(con_tarea):
+    server.registrar_diagnostico("sigmoide", True, True)
+    assert con_tarea.subobjetivos["derivada"].maneja_teoria is None
+
+
+@pytest.mark.parametrize("teoria, codigo, nombre", [
+    (False, False, "teoria"),
+    (False, True, "teoria"),
+    (True, False, "ejemplo"),
+    (True, True, "duda_especifica"),
+])
+def test_diagnostico_devuelve_el_momento_inicial(con_tarea, teoria, codigo, nombre):
+    respuesta = server.registrar_diagnostico("sigmoide", teoria, codigo)
+    assert momentos_en(respuesta) == {nombre}
+
+
+def test_diagnostico_de_nuevo_reemplaza(con_tarea):
+    server.registrar_diagnostico("sigmoide", False, False)
+    respuesta = server.registrar_diagnostico("sigmoide", True, True)
+    assert con_tarea.subobjetivos["sigmoide"].maneja_teoria is True
+    assert momentos_en(respuesta) == {"duda_especifica"}
+
+
+# ---------------------------------------------------------------------------
+# pedir_ayuda
+# ---------------------------------------------------------------------------
+
+def test_ayuda_sin_tarea_no_lanza_error():
+    respuesta = server.pedir_ayuda("sigmoide")
+    assert isinstance(respuesta, str)
+    assert "tarea" in respuesta.lower()
+
+
+def test_ayuda_id_inexistente_no_lanza_error(con_tarea):
+    respuesta = server.pedir_ayuda("no_existe")
+    assert isinstance(respuesta, str)
+    assert "no_existe" in respuesta
+
+
+def test_ayuda_sin_diagnostico_pide_diagnostico(con_tarea):
+    assert momentos_en(server.pedir_ayuda("sigmoide")) == {"diagnostico"}
+
+
+@pytest.mark.parametrize("teoria, codigo, nombre", [
+    (False, True, "teoria"),
+    (True, False, "ejemplo"),
+    (True, True, "duda_especifica"),
+])
+def test_ayuda_sin_fallos_usa_el_momento_inicial(con_tarea, teoria, codigo, nombre):
+    con_tarea.registrar_diagnostico("sigmoide", teoria, codigo)
+    assert momentos_en(server.pedir_ayuda("sigmoide")) == {nombre}
+
+
+def test_ayuda_con_fallos_usa_la_revision(con_tarea):
+    """Los fallos mandan sobre el diagnóstico."""
+    con_tarea.registrar_diagnostico("sigmoide", True, True)
+    fallar(con_tarea, "sigmoide")
+    assert momentos_en(server.pedir_ayuda("sigmoide")) == {"revision_conceptual"}
+
+
+def test_ayuda_intento_sin_tests_no_cuenta_como_fallo(con_tarea):
+    con_tarea.registrar_diagnostico("sigmoide", True, False)
+    server.registrar_intento("sigmoide", "x = 1")
+    assert momentos_en(server.pedir_ayuda("sigmoide")) == {"ejemplo"}
+
+
+def test_ayuda_rescate_queda_registrado(con_tarea):
+    fallar(con_tarea, "sigmoide", FALLOS_PARA_RESCATE)
+    respuesta = server.pedir_ayuda("sigmoide")
+    assert momentos_en(respuesta) == {"rescate"}
+    assert con_tarea.subobjetivos["sigmoide"].rescatado is True
+
+
+def test_ayuda_antes_del_rescate_no_entrega(con_tarea):
+    fallar(con_tarea, "sigmoide", FALLOS_PARA_RESCATE - 1)
+    respuesta = server.pedir_ayuda("sigmoide")
+    assert "rescate" not in momentos_en(respuesta)
+    assert con_tarea.subobjetivos["sigmoide"].rescatado is False
+
+
+def test_ayuda_sobre_resultados(con_tarea):
+    con_tarea.registrar_diagnostico("sigmoide", True, True)
+    respuesta = server.pedir_ayuda("sigmoide", sobre_resultados=True)
+    assert momentos_en(respuesta) == {"resultados"}
+
+
+def test_ayuda_sobre_resultados_manda_sobre_los_fallos(con_tarea):
+    fallar(con_tarea, "sigmoide", FALLOS_PARA_RESCATE)
+    respuesta = server.pedir_ayuda("sigmoide", sobre_resultados=True)
+    assert momentos_en(respuesta) == {"resultados"}
+    assert con_tarea.subobjetivos["sigmoide"].rescatado is False
+
+
+def test_ayuda_sobre_resultados_funciona_completado(con_tarea):
+    """Interpretar resultados suele venir después de resolver el subobjetivo."""
+    con_tarea.marcar_completado("sigmoide")
+    respuesta = server.pedir_ayuda("sigmoide", sobre_resultados=True)
+    assert momentos_en(respuesta) == {"resultados"}
+
+
+def test_ayuda_completado_no_da_instrucciones(con_tarea):
+    con_tarea.registrar_diagnostico("sigmoide", True, True)
+    con_tarea.marcar_completado("sigmoide")
+    respuesta = server.pedir_ayuda("sigmoide")
+    assert isinstance(respuesta, str)
+    assert momentos_en(respuesta) == set()
+
+
+def test_ayuda_no_registra_intentos(con_tarea):
+    server.pedir_ayuda("sigmoide")
+    assert con_tarea.subobjetivos["sigmoide"].intentos == []
+
+
+def test_ayuda_es_por_subobjetivo(con_tarea):
+    fallar(con_tarea, "sigmoide", 2)
+    assert momentos_en(server.pedir_ayuda("derivada")) == {"diagnostico"}
+
+
+# ---------------------------------------------------------------------------
+# ver_ejemplo
+# ---------------------------------------------------------------------------
+
+CODIGO_EJEMPLO = "def relu(x):\n    return max(0.0, x)\n"
+
+
+@pytest.fixture
+def tarea_con_ejemplo(tmp_path):
+    """'sigmoide' trae ejemplo oficial y 'derivada' no. Devuelve la ruta del ejemplo."""
+    archivo = tmp_path / "ejemplo_relu.py"
+    archivo.write_text(CODIGO_EJEMPLO, encoding="utf-8")
+    ruta = escribir_tarea(tmp_path / "tarea.json", [
+        {"id": "sigmoide", "descripcion": "Implementar la sigmoide",
+         "ejemplo": "ejemplo_relu.py"},
+        {"id": "derivada", "descripcion": "Implementar la derivada"},
+    ])
+    server.cargar_tarea(ruta)
+    return archivo
+
+
+def test_ver_ejemplo_sin_tarea_no_lanza_error():
+    respuesta = server.ver_ejemplo("sigmoide")
+    assert isinstance(respuesta, str)
+    assert "tarea" in respuesta.lower()
+
+
+def test_ver_ejemplo_id_inexistente_no_lanza_error(tarea_con_ejemplo):
+    respuesta = server.ver_ejemplo("no_existe")
+    assert isinstance(respuesta, str)
+    assert "no_existe" in respuesta
+
+
+def test_ver_ejemplo_devuelve_el_contenido(tarea_con_ejemplo):
+    assert CODIGO_EJEMPLO in server.ver_ejemplo("sigmoide")
+
+
+def test_ver_ejemplo_lee_el_archivo_cada_vez(tarea_con_ejemplo):
+    nuevo = "def relu(x):\n    return x if x > 0 else 0.0\n"
+    tarea_con_ejemplo.write_text(nuevo, encoding="utf-8")
+    assert nuevo in server.ver_ejemplo("sigmoide")
+
+
+def test_ver_ejemplo_sin_ejemplo_oficial_avisa(tarea_con_ejemplo):
+    respuesta = server.ver_ejemplo("derivada")
+    assert isinstance(respuesta, str)
+    assert "oficial" in respuesta.lower()
+    assert CODIGO_EJEMPLO not in respuesta
+
+
+def test_ver_ejemplo_archivo_inexistente_no_lanza_error(tarea_con_ejemplo):
+    tarea_con_ejemplo.unlink()
+    respuesta = server.ver_ejemplo("sigmoide")
+    assert isinstance(respuesta, str)
+
+
+def test_ver_ejemplo_no_cambia_el_estado(tarea_con_ejemplo):
+    server.ver_ejemplo("sigmoide")
+    sub = server.sesion.subobjetivos["sigmoide"]
+    assert sub.intentos == []
+    assert sub.rescatado is False

@@ -51,12 +51,16 @@ MOMENTOS: dict[str, dict[str, str]] = {
         "permitido": (
             "Muestra la implementación oficial del ejemplo de este subobjetivo y "
             "explica brevemente cómo funciona y qué hace cada parte. Luego dile "
-            "que su tarea es adaptarla a su propio caso."
+            "que su tarea es adaptarla a su propio caso. Si la tarea no trae un "
+            "ejemplo, escribe tú uno, basado en la versión de la librería que el "
+            "estudiante tiene instalada, y avísale antes de mostrarlo que no es "
+            "oficial ni está verificado: puede tener errores o usar una API de "
+            "otra versión. Sugiérele correrlo para comprobar que funciona."
         ),
         "prohibido": (
             "No adaptes el ejemplo al caso del estudiante: esa adaptación es su "
-            "tarea. No inventes una implementación si la tarea no trae un ejemplo; "
-            "avísale que falta."
+            "tarea. No presentes un ejemplo escrito por ti como si fuera oficial "
+            "ni omitas el aviso de que no está verificado."
         ),
     },
     "duda_especifica": {
