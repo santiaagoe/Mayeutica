@@ -1,0 +1,37 @@
+{
+  "titulo": "Tarea de ejemplo: regresión lineal con descenso de gradiente",
+  "subobjetivos": [
+    {
+      "id": "prediccion",
+      "descripcion": "Calcular las predicciones de un modelo lineal para muchas muestras a la vez (X @ w + b)",
+      "archivo": "regresion.py",
+      "funcion": "predecir",
+      "tests": "test_prediccion.py",
+      "ejemplo": "ejemplo_prediccion.py"
+    },
+    {
+      "id": "costo",
+      "descripcion": "Implementar el error cuadrático medio (MSE)",
+      "archivo": "regresion.py",
+      "funcion": "error_cuadratico_medio",
+      "tests": "test_costo.py",
+      "ejemplo": "ejemplo_costo.py"
+    },
+    {
+      "id": "gradiente",
+      "descripcion": "Calcular el gradiente del MSE respecto de los pesos y el sesgo",
+      "archivo": "regresion.py",
+      "funcion": "gradientes",
+      "tests": "test_gradiente.py",
+      "ejemplo": "ejemplo_gradiente.py"
+    },
+    {
+      "id": "entrenamiento",
+      "descripcion": "Entrenar el modelo con descenso de gradiente",
+      "archivo": "regresion.py",
+      "funcion": "entrenar",
+      "tests": "test_entrenamiento.py",
+      "ejemplo": "ejemplo_entrenamiento.py"
+    }
+  ]
+}
