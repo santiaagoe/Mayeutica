@@ -1,6 +1,7 @@
 from mcp.server.mcpserver import MCPServer
 from estado import SesionTarea, MOMENTOS
 from ejecutor import correr_pytest, ResultadoTests
+from lector import extraer_funcion
 
 # Instrucciones generales del servidor. El cliente MCP se las entrega al LLM al
 # conectarse, antes de cualquier herramienta. Son las reglas que valen siempre;
@@ -36,6 +37,10 @@ Reglas que valen siempre, en todos los momentos:
    hubiera funcionado.
 8. Responde en el idioma del estudiante, con mensajes cortos y una pregunta a
    la vez.
+9. Para ver lo que el estudiante tiene escrito, usa leer_mi_codigo en vez de
+   pedirle que lo pegue: en las revisiones, antes de explicar un error, y
+   cuando te pregunte por su código. Leer su código no es un intento: no lo
+   registres.
 """
 
 mcp = MCPServer("mayeutica", instructions=INSTRUCCIONES)
@@ -263,6 +268,56 @@ def ver_ejemplo(subobjetivo_id: str) -> str:
 
 
 @mcp.tool()
+def leer_mi_codigo(subobjetivo_id: str) -> str:
+    """Muestra el código que el estudiante tiene escrito para un subobjetivo.
+
+    Úsala para ver su código real antes de revisarlo o de responder una
+    pregunta sobre él, en vez de pedirle que lo pegue. Lee el archivo cada vez
+    que se llama, así que siempre trae la versión guardada más reciente. No
+    registra un intento ni cambia el estado de la sesión.
+
+    Si la tarea indica la función del subobjetivo ("funcion" en el JSON),
+    devuelve solo esa función, con extraer_funcion de lector.py, y dice de qué
+    archivo viene. Devuelve el archivo completo, explicando por qué, cuando:
+        - el subobjetivo no tiene "funcion",
+        - la función no está en el archivo (quizá le cambió el nombre), o
+        - el archivo tiene un error de sintaxis (SyntaxError), y por eso no se
+          puede buscar la función. En este caso la respuesta lo dice, porque
+          ese error es lo primero que hay que revisar.
+
+    Args:
+        subobjetivo_id: Id del subobjetivo.
+
+    Returns:
+        El código, con la ruta del archivo. O un mensaje si no hay tarea
+        cargada, el id no existe, el subobjetivo no tiene archivo configurado,
+        o el archivo no se encuentra.
+    """
+    if sesion is None:
+        return "No hay tarea cargada."
+    if subobjetivo_id not in sesion.subobjetivos:
+        return f"No existe el subobjetivo {subobjetivo_id}." 
+    subobjetivo = sesion.subobjetivos[subobjetivo_id]
+    if not subobjetivo.archivo:
+        return f"El subobjetivo {subobjetivo_id} no tiene un archivo configurado."
+    try:
+        with open(subobjetivo.archivo, "r", encoding="utf-8") as f:
+            texto_archivo = f.read()
+    except FileNotFoundError:
+        return f"No se encontró el archivo en la ruta indicada: {subobjetivo.archivo}"
+    if not subobjetivo.funcion:
+        return f"El subobjetivo no especifica una función. Archivo completo de {subobjetivo.archivo}:\n\n{texto_archivo}"
+    try:
+        codigo_funcion = extraer_funcion(texto_archivo, subobjetivo.funcion)
+        if codigo_funcion is None:
+            return f"No se encontró la función '{subobjetivo.funcion}' en el archivo. Archivo completo de {subobjetivo.archivo}:\n\n{texto_archivo}"
+        else:
+            return f"Función '{subobjetivo.funcion}' del archivo {subobjetivo.archivo}:\n\n{codigo_funcion}"
+    except SyntaxError:
+        return f"El archivo {subobjetivo.archivo} tiene un error de sintaxis y no se pudo buscar la función. Archivo completo:\n\n{texto_archivo}"
+
+
+@mcp.tool()
 def marcar_completado(subobjetivo_id: str) -> str:
     """Marca un subobjetivo como completado cuando el estudiante declara que lo resolvió.
 
@@ -283,8 +338,8 @@ def marcar_completado(subobjetivo_id: str) -> str:
         return f"Se marcó como completado el subobjetivo {subobjetivo_id}"
     else:
         return f"El subobjetivo {subobjetivo_id} ya estaba completado"
-    
-        
+
+
 @mcp.tool()
 def ejecutar_tests(subobjetivo_id: str) -> str:
     """Corre los tests de un subobjetivo sobre el código que el estudiante tiene en su archivo.

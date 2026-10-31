@@ -11,6 +11,7 @@ levantar el servidor. Para trabajar una herramienta a la vez:
     pytest test_server.py -k ayuda
     pytest test_server.py -k ver_ejemplo
     pytest test_server.py -k ejecutar
+    pytest test_server.py -k leer
 
 Los tests no exigen frases exactas: revisan que la respuesta sea texto, que no
 se lance una excepción y que el estado de la sesión cambie (o no) como debe.
@@ -712,3 +713,121 @@ def test_ver_ejemplo_no_cambia_el_estado(tarea_con_ejemplo):
     sub = server.sesion.subobjetivos["sigmoide"]
     assert sub.intentos == []
     assert sub.rescatado is False
+
+
+# ---------------------------------------------------------------------------
+# leer_mi_codigo
+# ---------------------------------------------------------------------------
+
+CODIGO_DOS_FUNCIONES = (
+    "import numpy as np\n"
+    "\n"
+    "\n"
+    "def predecir(X, w, b):\n"
+    "    return np.asarray(X) @ w + b\n"
+    "\n"
+    "\n"
+    "def error_cuadratico_medio(y, y_pred):\n"
+    "    return np.sum((y_pred - y) ** 2)\n"
+)
+
+
+@pytest.fixture
+def tarea_con_archivo(tmp_path):
+    """Carga una tarea con varios subobjetivos que comparten regresion.py.
+
+    - 'prediccion' y 'costo': archivo y función.
+    - 'entrenamiento': archivo y una función que todavía no existe en él.
+    - 'todo': archivo sin función (se muestra completo).
+    - 'sin_archivo': ni archivo ni función.
+    Devuelve la ruta del archivo del estudiante.
+    """
+    archivo = tmp_path / "regresion.py"
+    archivo.write_text(CODIGO_DOS_FUNCIONES, encoding="utf-8")
+    ruta = escribir_tarea(tmp_path / "tarea.json", [
+        {"id": "prediccion", "descripcion": "x", "archivo": "regresion.py",
+         "funcion": "predecir"},
+        {"id": "costo", "descripcion": "x", "archivo": "regresion.py",
+         "funcion": "error_cuadratico_medio"},
+        {"id": "entrenamiento", "descripcion": "x", "archivo": "regresion.py",
+         "funcion": "entrenar"},
+        {"id": "todo", "descripcion": "x", "archivo": "regresion.py"},
+        {"id": "sin_archivo", "descripcion": "x"},
+    ])
+    server.cargar_tarea(ruta)
+    return archivo
+
+
+def test_leer_esta_registrada_en_el_servidor():
+    nombres = {h.name for h in asyncio.run(server.mcp.list_tools())}
+    assert "leer_mi_codigo" in nombres
+
+
+def test_leer_sin_tarea_no_lanza_error():
+    respuesta = server.leer_mi_codigo("costo")
+    assert isinstance(respuesta, str) and respuesta.strip()
+
+
+def test_leer_id_inexistente_no_lanza_error(tarea_con_archivo):
+    respuesta = server.leer_mi_codigo("no_existe")
+    assert isinstance(respuesta, str)
+    assert "no_existe" in respuesta
+
+
+def test_leer_sin_archivo_configurado_no_lanza_error(tarea_con_archivo):
+    respuesta = server.leer_mi_codigo("sin_archivo")
+    assert isinstance(respuesta, str) and respuesta.strip()
+    assert "def " not in respuesta
+
+
+def test_leer_archivo_inexistente_no_lanza_error(tarea_con_archivo):
+    tarea_con_archivo.unlink()
+    respuesta = server.leer_mi_codigo("costo")
+    assert isinstance(respuesta, str)
+    assert str(tarea_con_archivo) in respuesta
+
+
+def test_leer_con_funcion_muestra_solo_esa(tarea_con_archivo):
+    respuesta = server.leer_mi_codigo("costo")
+    assert "def error_cuadratico_medio(y, y_pred):" in respuesta
+    assert "np.sum((y_pred - y) ** 2)" in respuesta
+    assert "def predecir" not in respuesta
+
+
+def test_leer_dice_de_que_archivo_viene(tarea_con_archivo):
+    assert str(tarea_con_archivo) in server.leer_mi_codigo("costo")
+
+
+def test_leer_sin_funcion_muestra_el_archivo_completo(tarea_con_archivo):
+    respuesta = server.leer_mi_codigo("todo")
+    assert "def predecir" in respuesta
+    assert "def error_cuadratico_medio" in respuesta
+
+
+def test_leer_funcion_que_no_esta_muestra_el_archivo_y_avisa(tarea_con_archivo):
+    respuesta = server.leer_mi_codigo("entrenamiento")
+    assert "def predecir" in respuesta
+    assert "def error_cuadratico_medio" in respuesta
+    assert "entrenar" in respuesta  # el aviso nombra la función que no encontró
+
+
+def test_leer_error_de_sintaxis_muestra_el_archivo_y_avisa(tarea_con_archivo):
+    roto = "def predecir(X, w, b:\n    return X\n"
+    tarea_con_archivo.write_text(roto, encoding="utf-8")
+    respuesta = server.leer_mi_codigo("prediccion")
+    assert roto.strip() in respuesta
+    assert "sintaxis" in respuesta.lower()
+
+
+def test_leer_lee_el_archivo_cada_vez(tarea_con_archivo):
+    server.leer_mi_codigo("costo")
+    tarea_con_archivo.write_text(
+        "def error_cuadratico_medio(y, y_pred):\n    return 42\n", encoding="utf-8")
+    assert "return 42" in server.leer_mi_codigo("costo")
+
+
+def test_leer_no_registra_intentos(tarea_con_archivo):
+    server.leer_mi_codigo("costo")
+    server.leer_mi_codigo("todo")
+    for sub in server.sesion.subobjetivos.values():
+        assert sub.intentos == []

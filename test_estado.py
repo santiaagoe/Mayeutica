@@ -215,3 +215,28 @@ def test_carga_rutas_absolutas_se_respetan(tmp_path):
     sub = SesionTarea(str(ruta)).subobjetivos["sigmoide"]
     assert sub.archivo == str(otra)
     assert sub.tests is None
+
+
+# ---------------------------------------------------------------------------
+# Carga de "funcion" (para leer_mi_codigo)
+#   pytest -k funcion
+# ---------------------------------------------------------------------------
+
+def test_carga_sin_funcion_deja_none(sesion):
+    assert sesion.subobjetivos["sigmoide"].funcion is None
+
+
+def test_carga_guarda_la_funcion(tmp_path):
+    ruta = tmp_path / "tarea.json"
+    escribir_tarea(ruta, [{"id": "costo", "descripcion": "x",
+                           "archivo": "regresion.py",
+                           "funcion": "error_cuadratico_medio"}])
+    sub = SesionTarea(str(ruta)).subobjetivos["costo"]
+    assert sub.funcion == "error_cuadratico_medio"
+
+
+def test_carga_funcion_no_se_trata_como_ruta(tmp_path):
+    """La función es un nombre, no una ruta: no se le antepone la carpeta del JSON."""
+    ruta = tmp_path / "tarea.json"
+    escribir_tarea(ruta, [{"id": "costo", "descripcion": "x", "funcion": "gradientes"}])
+    assert SesionTarea(str(ruta)).subobjetivos["costo"].funcion == "gradientes"

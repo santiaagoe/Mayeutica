@@ -162,6 +162,10 @@ class Subobjetivo:
             la tarea no la indica.
         ejemplo: Ruta absoluta a la implementación oficial que el tutor muestra
             en el momento "ejemplo", o None si la tarea no la indica.
+        funcion: Nombre de la función del archivo del estudiante que
+            corresponde a este subobjetivo (por ejemplo, "gradientes"), o None
+            si la tarea no lo indica. Lo usa leer_mi_codigo para mostrar solo
+            esa función cuando varios subobjetivos comparten un archivo.
         maneja_teoria: Respuesta del diagnóstico sobre la teoría (None si
             todavía no se preguntó).
         maneja_codigo: Respuesta del diagnóstico sobre el código (None si
@@ -176,6 +180,7 @@ class Subobjetivo:
     archivo: str | None = None
     tests: str | None = None
     ejemplo: str | None = None   # Ruta absoluta a la implementación oficial, o None.
+    funcion: str | None = None   # Nombre de la función de este subobjetivo, o None.
     maneja_teoria: bool | None = None
     maneja_codigo: bool | None = None
     rescatado: bool = False
@@ -216,6 +221,8 @@ class SesionTarea:
             traer además "archivo", "tests" y "ejemplo" (opcionales). Si son rutas
             relativas, se interpretan desde la carpeta donde está el JSON, no
             desde el directorio actual, y se guardan como rutas absolutas.
+            También puede traer "funcion" (opcional): el nombre de la función
+            del subobjetivo, que se guarda tal cual (no es una ruta).
 
         Raises:
             FileNotFoundError: Si el archivo no existe.
@@ -236,13 +243,15 @@ class SesionTarea:
             archivo = resolver_ruta(s.get("archivo"))
             tests = resolver_ruta(s.get("tests"))
             ejemplo = resolver_ruta(s.get("ejemplo"))
+            funcion = s.get("funcion")
 
             subobjetivo = Subobjetivo(
                 id=s["id"],
                 descripcion=s["descripcion"],
                 archivo=archivo,
                 tests=tests,
-                ejemplo=ejemplo
+                ejemplo=ejemplo,
+                funcion = funcion
             )
             
             if subobjetivo.id in subs:

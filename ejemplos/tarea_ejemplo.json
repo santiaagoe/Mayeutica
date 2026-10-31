@@ -5,6 +5,7 @@
       "id": "sigmoide",
       "descripcion": "Implementar la función sigmoide",
       "archivo": "neurona.py",
+      "funcion": "sigmoide",
       "tests": "test_sigmoide.py",
       "ejemplo": "ejemplo_sigmoide.py"
     },
@@ -12,6 +13,7 @@
       "id": "derivada",
       "descripcion": "Implementar la derivada de la sigmoide",
       "archivo": "neurona.py",
+      "funcion": "derivada_sigmoide",
       "tests": "test_derivada.py",
       "ejemplo": "ejemplo_derivada.py"
     },
@@ -19,6 +21,7 @@
       "id": "forward",
       "descripcion": "Calcular la salida de la neurona con np.dot y la sigmoide",
       "archivo": "neurona.py",
+      "funcion": "forward",
       "tests": "test_forward.py",
       "ejemplo": "ejemplo_forward.py"
     }
