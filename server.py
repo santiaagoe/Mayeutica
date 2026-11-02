@@ -3,6 +3,7 @@ from estado import SesionTarea, MOMENTOS
 from ejecutor import correr_pytest, ResultadoTests
 from lector import extraer_funcion
 from pathlib import Path
+import entorno
 import os
 
 # Instrucciones generales del servidor. El cliente MCP se las entrega al LLM al
@@ -49,6 +50,28 @@ Reglas que valen siempre, en todos los momentos:
     corresponde. Sin un fallo registrado no estás en revisión: aunque veas el
     error con leer_mi_codigo, no señales la línea ni compares su código con
     el ejemplo; sigue lo que devuelve pedir_ayuda.
+11. Si el estudiante tiene una duda sobre sus herramientas (terminal, git y
+    GitHub, VS Code, el entorno de Python, cargar datos) y no sobre cómo
+    programar un subobjetivo, usa ayuda_entorno. No respondas esas preguntas de
+    memoria: la herramienta comprueba que no sea una pregunta de la tarea
+    disfrazada y te dice cómo responder.
+"""
+
+# Cómo responder una pregunta de entorno. ayuda_entorno lo devuelve cuando la
+# pregunta no coincide con ningún subobjetivo de la tarea.
+INSTRUCCIONES_ENTORNO = """\
+Esta pregunta es sobre las herramientas, no sobre lo que evalúa la tarea:
+respóndela directo, sin pedir intentos previos y sin usar los momentos del
+ciclo.
+
+- Ve paso a paso: da los comandos de a uno y espera a que el estudiante cuente
+  qué le salió antes de dar el siguiente.
+- Di siempre qué debería aparecer si el comando funciona.
+- Si no sabes su sistema operativo o su terminal, pregúntaselo antes de dar
+  comandos.
+- Si en medio de la respuesta aparece algo que sí es parte de un subobjetivo
+  (por ejemplo, cómo normalizar los datos), no lo resuelvas: vuelve a
+  pedir_ayuda.
 """
 
 mcp = MCPServer("mayeutica", instructions=INSTRUCCIONES)
@@ -438,3 +461,39 @@ def ejecutar_tests(subobjetivo_id: str) -> str:
 
 if __name__ == "__main__":
     mcp.run()
+
+
+@mcp.tool()
+def ayuda_entorno(pregunta: str) -> str:
+    """Responde dudas sobre las herramientas de trabajo del estudiante, no sobre la tarea.
+
+    Se usa para terminal, git y GitHub, VS Code, el entorno de Python (instalar
+    paquetes, errores de import, versiones) y carga de datos (descargar un
+    dataset, leer un CSV, rutas que no se encuentran). No exige intentos
+    previos y no cambia el estado de la sesión.
+
+    No se usa para dudas sobre cómo programar un subobjetivo: para eso está
+    pedir_ayuda. Si se llama con una, la herramienta compara la pregunta con
+    los subobjetivos de la tarea cargada y, si coincide con alguno, te
+    redirige a pedir_ayuda en vez de dejarte responder.
+
+    Args:
+        pregunta: La duda del estudiante, con sus palabras.
+
+    Returns:
+        Las instrucciones para responderla directo y paso a paso, o un mensaje
+        que nombra el subobjetivo con el que coincide y te manda a
+        pedir_ayuda. Sin tarea cargada no hay con qué comparar, así que
+        devuelve las instrucciones de respuesta directa. Una pregunta vacía
+        devuelve un mensaje que la pide.
+    """
+    if (len(pregunta.strip()) == 0):
+        return "Por favor, haz una pregunta" 
+    if (sesion is None):
+        return INSTRUCCIONES_ENTORNO
+    subobjetivos = list(sesion.subobjetivos.values())
+    coincide = entorno.subobjetivo_coincidente(pregunta , subobjetivos)
+    if (coincide is not None):
+        return f"Coincide con el subobjetivo {coincide}. Ve a pedir_ayuda"
+    else:
+        return INSTRUCCIONES_ENTORNO

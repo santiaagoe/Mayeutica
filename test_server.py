@@ -12,6 +12,7 @@ levantar el servidor. Para trabajar una herramienta a la vez:
     pytest test_server.py -k ver_ejemplo
     pytest test_server.py -k ejecutar
     pytest test_server.py -k leer
+    pytest test_server.py -k entorno
 
 Los tests no exigen frases exactas: revisan que la respuesta sea texto, que no
 se lance una excepción y que el estado de la sesión cambie (o no) como debe.
@@ -920,3 +921,57 @@ def test_pedir_ayuda_guarda_el_rescate(con_tarea, ruta_tarea):
     fallar(con_tarea, "sigmoide", FALLOS_PARA_RESCATE)
     server.pedir_ayuda("sigmoide")
     assert leer_estado(ruta_tarea)["subobjetivos"]["sigmoide"]["rescatado"] is True
+
+
+# ---------------------------------------------------------------------------
+# ayuda_entorno
+# ---------------------------------------------------------------------------
+
+def test_entorno_registrada_en_el_servidor():
+    nombres = {h.name for h in asyncio.run(server.mcp.list_tools())}
+    assert "ayuda_entorno" in nombres
+
+
+def test_entorno_sin_tarea_responde_directo():
+    """Sin tarea no hay subobjetivos con qué comparar: no es un error."""
+    respuesta = server.ayuda_entorno("¿Cómo activo el entorno virtual?")
+    assert server.INSTRUCCIONES_ENTORNO in respuesta
+
+
+def test_entorno_pregunta_de_entorno_responde_directo(con_tarea):
+    respuesta = server.ayuda_entorno("¿Cómo activo el entorno virtual?")
+    assert server.INSTRUCCIONES_ENTORNO in respuesta
+
+
+def test_entorno_pregunta_de_la_tarea_redirige(con_tarea):
+    respuesta = server.ayuda_entorno("¿Cómo implemento la sigmoide con numpy?")
+    assert server.INSTRUCCIONES_ENTORNO not in respuesta
+    assert "sigmoide" in respuesta
+    assert "pedir_ayuda" in respuesta
+
+
+def test_entorno_redirige_al_subobjetivo_correcto(con_tarea):
+    respuesta = server.ayuda_entorno("no me sale la derivada")
+    assert "derivada" in respuesta
+    assert server.INSTRUCCIONES_ENTORNO not in respuesta
+
+
+def test_entorno_pregunta_vacia_no_lanza_error(con_tarea):
+    respuesta = server.ayuda_entorno("   ")
+    assert isinstance(respuesta, str)
+    assert respuesta
+    assert server.INSTRUCCIONES_ENTORNO not in respuesta
+
+
+def test_entorno_no_cambia_el_estado(con_tarea, ruta_tarea):
+    """Ni intentos, ni rescate, ni archivo de estado guardado."""
+    server.ayuda_entorno("¿Cómo implemento la sigmoide?")
+    server.ayuda_entorno("¿Cómo activo el entorno virtual?")
+    for subobjetivo in con_tarea.subobjetivos.values():
+        assert subobjetivo.intentos == []
+        assert subobjetivo.rescatado is False
+    assert not os.path.exists(server.ruta_estado(ruta_tarea))
+
+
+def test_entorno_las_instrucciones_del_servidor_la_mencionan():
+    assert "ayuda_entorno" in server.INSTRUCCIONES
