@@ -19,6 +19,7 @@ se lance una excepción y que el estado de la sesión cambie (o no) como debe.
 
 import asyncio
 import json
+import os
 
 import pytest
 
@@ -187,6 +188,28 @@ def test_cargar_otra_tarea_empieza_de_cero(con_tarea, ruta_tarea):
     server.cargar_tarea(ruta_tarea)
     assert server.sesion is not con_tarea
     assert server.sesion.subobjetivos["sigmoide"].intentos == []
+
+
+def test_cargar_expande_la_virgulilla(tmp_path, monkeypatch):
+    """Una ruta como '~/tarea.json' apunta a la carpeta personal."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    escribir_tarea(tmp_path / "tarea.json", SUBOBJETIVOS)
+    server.cargar_tarea("~/tarea.json")
+    assert isinstance(server.sesion, SesionTarea)
+
+
+def test_cargar_ignora_espacios_alrededor_de_la_ruta(ruta_tarea):
+    """El LLM a veces manda la ruta con espacios o un salto de línea."""
+    server.cargar_tarea(f"  {ruta_tarea}\n")
+    assert isinstance(server.sesion, SesionTarea)
+
+
+def test_cargar_virgulilla_con_espacios(tmp_path, monkeypatch):
+    """Espacios y '~' juntos: el '~' solo se expande si queda al inicio."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    escribir_tarea(tmp_path / "tarea.json", SUBOBJETIVOS)
+    server.cargar_tarea("  ~/tarea.json\n")
+    assert isinstance(server.sesion, SesionTarea)
 
 
 # ---------------------------------------------------------------------------
@@ -831,3 +854,69 @@ def test_leer_no_registra_intentos(tarea_con_archivo):
     server.leer_mi_codigo("todo")
     for sub in server.sesion.subobjetivos.values():
         assert sub.intentos == []
+
+
+# ---------------------------------------------------------------------------
+# Guardado automático del estado
+# ---------------------------------------------------------------------------
+
+def leer_estado(ruta_tarea):
+    """Lee el archivo de estado que corresponde a la tarea dada."""
+    with open(server.ruta_estado(ruta_tarea), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def test_ruta_estado_queda_junto_a_la_tarea():
+    assert server.ruta_estado("/a/b/tarea.json") == "/a/b/tarea.estado.json"
+
+
+def test_guardar_sesion_no_es_herramienta():
+    nombres = {h.name for h in asyncio.run(server.mcp.list_tools())}
+    assert "guardar_sesion" not in nombres
+    assert "ruta_estado" not in nombres
+
+
+def test_guardar_sesion_sin_tarea_no_lanza_error():
+    server.guardar_sesion()
+
+
+def test_cargar_no_pisa_un_estado_guardado(con_tarea, ruta_tarea):
+    """Mientras no exista la recarga, cargar no debe borrar el progreso."""
+    server.registrar_intento("sigmoide", "def sigmoide(x): pass")
+    server.cargar_tarea(ruta_tarea)
+    assert len(leer_estado(ruta_tarea)["subobjetivos"]["sigmoide"]["intentos"]) == 1
+
+
+def test_registrar_intento_guarda(con_tarea, ruta_tarea):
+    server.registrar_intento("sigmoide", "def sigmoide(x): pass")
+    assert len(leer_estado(ruta_tarea)["subobjetivos"]["sigmoide"]["intentos"]) == 1
+
+
+def test_registrar_intento_fallido_no_crea_archivo(con_tarea, ruta_tarea):
+    server.registrar_intento("no_existe", "x")
+    assert not os.path.exists(server.ruta_estado(ruta_tarea))
+
+
+def test_registrar_diagnostico_guarda(con_tarea, ruta_tarea):
+    server.registrar_diagnostico("sigmoide", True, False)
+    sub = leer_estado(ruta_tarea)["subobjetivos"]["sigmoide"]
+    assert sub["maneja_teoria"] is True
+    assert sub["maneja_codigo"] is False
+
+
+def test_marcar_completado_guarda(con_tarea, ruta_tarea):
+    server.marcar_completado("sigmoide")
+    assert leer_estado(ruta_tarea)["subobjetivos"]["sigmoide"]["completado"] is True
+
+
+def test_ejecutar_tests_guarda(tarea_con_tests, tmp_path):
+    server.ejecutar_tests("sigmoide")
+    estado = leer_estado(str(tmp_path / "tarea.json"))
+    assert len(estado["subobjetivos"]["sigmoide"]["intentos"]) == 1
+
+
+def test_pedir_ayuda_guarda_el_rescate(con_tarea, ruta_tarea):
+    """El rescate se anota dentro de pedir_ayuda: también hay que guardarlo."""
+    fallar(con_tarea, "sigmoide", FALLOS_PARA_RESCATE)
+    server.pedir_ayuda("sigmoide")
+    assert leer_estado(ruta_tarea)["subobjetivos"]["sigmoide"]["rescatado"] is True

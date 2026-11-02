@@ -2,6 +2,8 @@ from mcp.server.mcpserver import MCPServer
 from estado import SesionTarea, MOMENTOS
 from ejecutor import correr_pytest, ResultadoTests
 from lector import extraer_funcion
+from pathlib import Path
+import os
 
 # Instrucciones generales del servidor. El cliente MCP se las entrega al LLM al
 # conectarse, antes de cualquier herramienta. Son las reglas que valen siempre;
@@ -41,6 +43,12 @@ Reglas que valen siempre, en todos los momentos:
    pedirle que lo pegue: en las revisiones, antes de explicar un error, y
    cuando te pregunte por su código. Leer su código no es un intento: no lo
    registres.
+10. Si el estudiante dice que su código falla o pide ayuda con algo que ya
+    escribió, corre ejecutar_tests antes de ayudar, aunque no lo pida: así el
+    fallo queda registrado y la respuesta trae el momento de revisión que
+    corresponde. Sin un fallo registrado no estás en revisión: aunque veas el
+    error con leer_mi_codigo, no señales la línea ni compares su código con
+    el ejemplo; sigue lo que devuelve pedir_ayuda.
 """
 
 mcp = MCPServer("mayeutica", instructions=INSTRUCCIONES)
@@ -112,10 +120,38 @@ def instrucciones_revision(subobjetivo_id: str) -> str | None:
         permitido, motivo = sesion.puede_rescatar(subobjetivo_id)
         if permitido:
             sesion.registrar_rescate(subobjetivo_id)
+            guardar_sesion()
             return formatear_momento("rescate")
         else:
             return formatear_momento("revision_explicita")       
     return formatear_momento(momento)
+
+
+def ruta_estado(ruta_tarea: str) -> str:
+    """Devuelve la ruta del archivo de estado de una tarea.
+
+    Queda junto al JSON de la tarea: '/a/b/tarea.json' -> '/a/b/tarea.estado.json'.
+    """
+    rt = Path(ruta_tarea)
+    nuevo_rt = rt.with_suffix(".estado.json")
+    return str(nuevo_rt)
+    
+
+
+
+def guardar_sesion() -> None:
+    """Guarda la sesión activa en su archivo de estado.
+
+    Si no hay tarea cargada, no hace nada. La llaman las herramientas que
+    cambian la sesión, después del cambio y solo si el cambio ocurrió.
+    """
+    if (sesion is None):
+        return None
+    ruta = ruta_estado(sesion.ruta_tarea)
+    if sesion:
+        sesion.guardar(ruta) #guarda lo q actualizamos
+        return None
+
 
 
 @mcp.tool()
@@ -132,7 +168,8 @@ def cargar_tarea(ruta: str) -> str:
     global sesion 
     try:
         #haciendo esto protegemos la sesión anterior
-        nueva_sesion = SesionTarea(ruta)
+        ruta_sesion = os.path.expanduser(ruta.strip()) ## Pa encontrar -/tarea.json/n
+        nueva_sesion = SesionTarea(ruta_sesion)
     except (FileNotFoundError, ValueError) as e:
         return f"Error al cargar la tarea: {e}"    
    
@@ -160,6 +197,7 @@ def registrar_intento(subobjetivo_id: str, codigo: str,
         else:
             sesion.registrar_intento(subobjetivo_id,codigo, resultado_tests)
             intentos = len(sesion.subobjetivos[subobjetivo_id].intentos)
+            guardar_sesion()
             return f"Intento registrado correctamente. El subobjetivo {subobjetivo_id} tiene {intentos} intentos"
 
 @mcp.tool()
@@ -189,6 +227,7 @@ def registrar_diagnostico(subobjetivo_id: str, maneja_teoria: bool,
     sesion.registrar_diagnostico(subobjetivo_id, maneja_teoria, maneja_codigo)
     momento_inicial = sesion.momento_inicial(subobjetivo_id)
     instrucciones = formatear_momento(momento_inicial)
+    guardar_sesion()
     return f"El momento por el que empieza el ciclo es {momento_inicial} y las instrucciones son:\n{instrucciones}"
 
 
@@ -335,6 +374,7 @@ def marcar_completado(subobjetivo_id: str) -> str:
     subobjetivo = sesion.subobjetivos[subobjetivo_id]
     if (subobjetivo.completado == False):
         sesion.marcar_completado(subobjetivo_id)
+        guardar_sesion()
         return f"Se marcó como completado el subobjetivo {subobjetivo_id}"
     else:
         return f"El subobjetivo {subobjetivo_id} ya estaba completado"
@@ -382,6 +422,7 @@ def ejecutar_tests(subobjetivo_id: str) -> str:
     sesion.registrar_intento(subobjetivo_id, codigo, resultado.salida, paso= resultado.paso)
     if resultado.paso:
         sesion.marcar_completado(subobjetivo_id)
+        guardar_sesion()
         return (f"Los tests del subobjetivo {subobjetivo_id} fueron aprobados.\n\n"
             f"Salida de pytest:\n\n{resultado.salida}")
     else:
@@ -390,6 +431,7 @@ def ejecutar_tests(subobjetivo_id: str) -> str:
         revision = instrucciones_revision(subobjetivo_id)
         if revision:
             mensaje_fallo += f"\n\nInstrucciones de revisión aplicables:\n{revision}"
+        guardar_sesion()    
         return mensaje_fallo    
 
 

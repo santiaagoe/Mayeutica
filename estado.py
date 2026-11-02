@@ -259,6 +259,7 @@ class SesionTarea:
             subs[subobjetivo.id] = subobjetivo
             
         self.subobjetivos = subs
+        self.ruta_tarea = str(ruta_absoluta_json)
 
     def registrar_intento(self, subobjetivo_id: str, codigo: str,
                           resultado_tests: str | None = None,

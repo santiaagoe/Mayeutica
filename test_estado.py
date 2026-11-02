@@ -135,6 +135,11 @@ def test_registrar_intento_id_inexistente_lanza_error(sesion):
 # Paso 6: guardar
 # ---------------------------------------------------------------------------
 
+def test_sesion_recuerda_la_ruta_absoluta_de_la_tarea(sesion, tmp_path):
+    """Hace falta para saber dónde guardar su estado."""
+    assert sesion.ruta_tarea == str((tmp_path / "tarea.json").resolve())
+
+
 def test_guardar_crea_el_archivo_con_los_intentos(sesion, tmp_path):
     sesion.registrar_intento("sigmoide", "codigo_unico_123")
     ruta = tmp_path / "estado_guardado.json"

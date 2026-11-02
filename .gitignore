@@ -5,3 +5,4 @@ __pycache__/
 tareas/
 data/
 .DS_Store
+*.estado.json
