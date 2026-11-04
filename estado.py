@@ -15,6 +15,11 @@ import json
 # entregar el código (momento "rescate").
 FALLOS_PARA_RESCATE = 3
 
+# Campos de un Subobjetivo que son progreso del estudiante (además de los
+# intentos) y que cargar_estado recupera. El resto de los campos los define la
+# tarea.
+CAMPOS_PROGRESO = ("maneja_teoria", "maneja_codigo", "completado", "rescatado")
+
 # Tabla de momentos del ciclo: qué debe y qué no puede hacer el tutor en cada
 # uno. Es el texto que el servidor le entrega al LLM como instrucción. Las
 # claves son fijas (las devuelven momento_inicial y momento_revision) y no
@@ -142,6 +147,36 @@ class Intento:
     resultado_tests : str | None = None
     paso: bool | None = None   # True si pasaron los tests, False si fallaron, None si no se corrieron.
     fecha : datetime = field(default_factory=datetime.now)
+
+    @classmethod
+    def desde_dict(cls, datos: dict) -> "Intento":
+        """Reconstruye un Intento a partir de un diccionario leído del JSON de estado.
+
+        Es el camino de vuelta de guardar: guardar usa asdict y json.dump con
+        default=str, así que la fecha llega como texto (por ejemplo,
+        "2026-11-02 20:13:05.123456") y hay que convertirla de nuevo a datetime.
+
+        Args:
+            datos: Diccionario con "subobjetivo_id", "codigo" y "fecha"
+                (obligatorios), y "resultado_tests" y "paso" (opcionales; si
+                faltan, quedan en None).
+
+        Returns:
+            Un Intento con los mismos datos y la fecha como datetime.
+
+        Raises:
+            KeyError: Si falta un campo obligatorio.
+            ValueError: Si la fecha no tiene un formato válido.
+        """
+        
+        return cls(subobjetivo_id= datos["subobjetivo_id"],
+                codigo = datos["codigo"], 
+                resultado_tests = datos.get("resultado_tests") ,
+                paso = datos.get("paso"), 
+                fecha = datetime.fromisoformat(datos["fecha"]))
+     
+
+
     
 
 @dataclass
@@ -470,3 +505,66 @@ class SesionTarea:
         #default=str convierte a texto 
         with open(ruta, "w", encoding="utf-8") as f:
             json.dump(datos, f, ensure_ascii=False, indent=2, default=str)
+
+    def cargar_estado(self, ruta: str) -> list[str]:
+        """Recupera el progreso guardado con guardar y lo aplica a esta sesión.
+
+        La tarea manda sobre la definición de cada subobjetivo (descripción,
+        archivo, tests, ejemplo, funcion): eso ya viene de __init__ y no se
+        toca. Del estado se toma solo el progreso: los intentos (reconstruidos
+        con Intento.desde_dict) y los campos de CAMPOS_PROGRESO.
+
+        Reglas cuando la tarea y el estado no calzan:
+            - Un id del estado que no está en la tarea se ignora (y se informa
+              en el valor de retorno).
+            - Un subobjetivo de la tarea que no está en el estado queda como
+              está, sin progreso.
+            - Un campo de CAMPOS_PROGRESO que falte en el estado deja el valor
+              que ya tenía el subobjetivo.
+
+        Todo o nada: si el archivo está dañado, la sesión queda exactamente
+        como estaba, sin aplicar el progreso de ningún subobjetivo. (Pista:
+        primero lee y reconstruye todo, y recién al final modifica la sesión.)
+
+        Args:
+            ruta: Archivo de estado escrito antes por guardar.
+
+        Returns:
+            Los ids del estado que se ignoraron porque no están en la tarea, en
+            el orden del archivo. Lista vacía si todos calzan.
+
+        Raises:
+            FileNotFoundError: Si el archivo no existe.
+            ValueError: Si el archivo está dañado: no es JSON válido, no tiene
+                "subobjetivos" o algún intento no se puede reconstruir.
+        """
+        if (len(ruta) == 0): #si no hay ruta no debería existir el archivo
+            raise FileNotFoundError
+        with open(ruta, encoding="utf-8") as f: #solo es un archivo
+            datos = json.load(f)
+        ignorados = [] 
+        preparados = {}
+        try:
+            datos_subobjetivo = datos["subobjetivos"]
+            for id_sub, progreso in datos_subobjetivo.items() :
+                if id_sub in self.subobjetivos:
+                    intentos_del_progreso = []
+                    for intento in progreso["intentos"]:
+                        crear_intento = Intento.desde_dict(intento)
+                        intentos_del_progreso.append(crear_intento)
+                    llaves_progreso = progreso.keys() 
+                    campos = {}
+                    for campo in CAMPOS_PROGRESO:
+                        if campo in llaves_progreso:
+                            campos[campo] = progreso[campo]
+                    preparados[id_sub] = (intentos_del_progreso,campos)           
+                else:
+                    ignorados.append(id_sub)       
+        except KeyError as e:
+            raise ValueError(f"El archivo de estado {ruta} está dañado: falta el campo {e}") from e
+        for id_sub, (intento,campos) in preparados.items():
+            subobjetivo = self.subobjetivos[id_sub]
+            subobjetivo.intentos = intento #actualizamos los intentos
+            for nombre, valor in campos.items():
+                setattr(subobjetivo, nombre, valor) #para no hacer subobj.algo
+        return ignorados     

@@ -245,3 +245,196 @@ def test_carga_funcion_no_se_trata_como_ruta(tmp_path):
     ruta = tmp_path / "tarea.json"
     escribir_tarea(ruta, [{"id": "costo", "descripcion": "x", "funcion": "gradientes"}])
     assert SesionTarea(str(ruta)).subobjetivos["costo"].funcion == "gradientes"
+
+
+# ---------------------------------------------------------------------------
+# Recargar el estado: Intento.desde_dict y cargar_estado
+#
+#     pytest test_estado.py -k desde_dict
+#     pytest test_estado.py -k cargar_estado
+# ---------------------------------------------------------------------------
+
+def ida_y_vuelta(intento):
+    """Pasa un Intento por el mismo camino que guardar: asdict + JSON con default=str."""
+    from dataclasses import asdict
+    return json.loads(json.dumps(asdict(intento), default=str))
+
+
+def escribir_estado(ruta, subobjetivos):
+    """Escribe un archivo de estado a mano, con el formato de guardar."""
+    ruta.write_text(json.dumps({"subobjetivos": subobjetivos}, ensure_ascii=False),
+                    encoding="utf-8")
+
+
+def recargar(sesion, tmp_path):
+    """Guarda la sesión, crea una sesión nueva de la misma tarea y le carga el estado."""
+    ruta_estado = tmp_path / "tarea.estado.json"
+    sesion.guardar(str(ruta_estado))
+    nueva = SesionTarea(str(tmp_path / "tarea.json"))
+    nueva.cargar_estado(str(ruta_estado))
+    return nueva
+
+
+def test_desde_dict_devuelve_un_intento():
+    datos = ida_y_vuelta(Intento("sigmoide", "x = 1"))
+    assert isinstance(Intento.desde_dict(datos), Intento)
+
+
+def test_desde_dict_ida_y_vuelta_da_el_mismo_intento():
+    original = Intento("sigmoide", "x = 1", "1 failed", paso=False)
+    assert Intento.desde_dict(ida_y_vuelta(original)) == original
+
+
+def test_desde_dict_la_fecha_vuelve_como_datetime():
+    datos = ida_y_vuelta(Intento("sigmoide", "x = 1"))
+    assert isinstance(datos["fecha"], str)
+    assert isinstance(Intento.desde_dict(datos).fecha, datetime)
+
+
+def test_desde_dict_opcionales_ausentes_quedan_en_none():
+    datos = {"subobjetivo_id": "sigmoide", "codigo": "x = 1",
+             "fecha": "2026-11-02 20:13:05.123456"}
+    intento = Intento.desde_dict(datos)
+    assert intento.resultado_tests is None
+    assert intento.paso is None
+
+
+def test_desde_dict_sin_campo_obligatorio_lanza_keyerror():
+    with pytest.raises(KeyError):
+        Intento.desde_dict({"subobjetivo_id": "sigmoide", "fecha": "2026-11-02 20:13:05"})
+
+
+def test_desde_dict_fecha_invalida_lanza_valueerror():
+    with pytest.raises(ValueError):
+        Intento.desde_dict({"subobjetivo_id": "sigmoide", "codigo": "x",
+                            "fecha": "no es una fecha"})
+
+
+def test_cargar_estado_recupera_los_intentos(sesion, tmp_path):
+    sesion.registrar_intento("sigmoide", "x = 1", "1 failed", paso=False)
+    sesion.registrar_intento("sigmoide", "x = 2", "ok", paso=True)
+    nueva = recargar(sesion, tmp_path)
+    assert nueva.subobjetivos["sigmoide"].intentos == sesion.subobjetivos["sigmoide"].intentos
+
+
+def test_cargar_estado_los_intentos_son_objetos(sesion, tmp_path):
+    sesion.registrar_intento("sigmoide", "x = 1")
+    intento = recargar(sesion, tmp_path).subobjetivos["sigmoide"].intentos[0]
+    assert isinstance(intento, Intento)
+    assert isinstance(intento.fecha, datetime)
+
+
+def test_cargar_estado_los_fallos_siguen_contando(sesion, tmp_path):
+    """Si los intentos vuelven bien, el árbitro sigue funcionando sin cambios."""
+    for _ in range(2):
+        sesion.registrar_intento("sigmoide", "x = 1", "1 failed", paso=False)
+    assert recargar(sesion, tmp_path).subobjetivos["sigmoide"].intentos_fallidos() == 2
+
+
+def test_cargar_estado_recupera_el_diagnostico(sesion, tmp_path):
+    sesion.registrar_diagnostico("sigmoide", True, False)
+    sub = recargar(sesion, tmp_path).subobjetivos["sigmoide"]
+    assert sub.maneja_teoria is True
+    assert sub.maneja_codigo is False
+
+
+def test_cargar_estado_recupera_completado_y_rescatado(sesion, tmp_path):
+    sesion.marcar_completado("sigmoide")
+    sesion.subobjetivos["derivada"].rescatado = True
+    nueva = recargar(sesion, tmp_path)
+    assert nueva.subobjetivos["sigmoide"].completado is True
+    assert nueva.subobjetivos["derivada"].rescatado is True
+
+
+def test_cargar_estado_no_mezcla_subobjetivos(sesion, tmp_path):
+    sesion.registrar_intento("sigmoide", "x = 1")
+    nueva = recargar(sesion, tmp_path)
+    assert nueva.subobjetivos["derivada"].intentos == []
+
+
+def test_cargar_estado_la_tarea_manda_en_la_descripcion(sesion, tmp_path):
+    """Si se corrige la tarea después de guardar, gana la versión nueva."""
+    ruta_estado = tmp_path / "tarea.estado.json"
+    sesion.guardar(str(ruta_estado))
+    escribir_tarea(tmp_path / "tarea.json", [
+        {"id": "sigmoide", "descripcion": "Descripción corregida"},
+        {"id": "derivada", "descripcion": "Implementar la derivada de la sigmoide"},
+    ])
+    nueva = SesionTarea(str(tmp_path / "tarea.json"))
+    nueva.cargar_estado(str(ruta_estado))
+    assert nueva.subobjetivos["sigmoide"].descripcion == "Descripción corregida"
+
+
+def test_cargar_estado_todos_calzan_devuelve_lista_vacia(sesion, tmp_path):
+    ruta_estado = tmp_path / "tarea.estado.json"
+    sesion.guardar(str(ruta_estado))
+    assert sesion.cargar_estado(str(ruta_estado)) == []
+
+
+def test_cargar_estado_ignora_ids_que_ya_no_estan(sesion, tmp_path):
+    ruta_estado = tmp_path / "tarea.estado.json"
+    escribir_estado(ruta_estado, {
+        "viejo": {"intentos": [], "completado": True},
+        "sigmoide": {"intentos": [], "completado": True},
+    })
+    assert sesion.cargar_estado(str(ruta_estado)) == ["viejo"]
+    assert "viejo" not in sesion.subobjetivos
+    assert sesion.subobjetivos["sigmoide"].completado is True
+
+
+def test_cargar_estado_subobjetivo_nuevo_parte_de_cero(sesion, tmp_path):
+    ruta_estado = tmp_path / "tarea.estado.json"
+    escribir_estado(ruta_estado, {"sigmoide": {"intentos": [], "completado": True}})
+    sesion.cargar_estado(str(ruta_estado))
+    derivada = sesion.subobjetivos["derivada"]
+    assert derivada.intentos == []
+    assert derivada.completado is False
+    assert derivada.maneja_teoria is None
+
+
+def test_cargar_estado_campo_faltante_deja_el_valor_previo(sesion, tmp_path):
+    """Un estado sin 'rescatado' (por ejemplo, de una versión vieja) no es un error."""
+    ruta_estado = tmp_path / "tarea.estado.json"
+    escribir_estado(ruta_estado, {"sigmoide": {"intentos": [], "completado": True}})
+    sesion.cargar_estado(str(ruta_estado))
+    assert sesion.subobjetivos["sigmoide"].rescatado is False
+
+
+def test_cargar_estado_archivo_inexistente_lanza_error(sesion, tmp_path):
+    with pytest.raises(FileNotFoundError):
+        sesion.cargar_estado(str(tmp_path / "no_existe.json"))
+
+
+def test_cargar_estado_json_invalido_lanza_valueerror(sesion, tmp_path):
+    ruta_estado = tmp_path / "tarea.estado.json"
+    ruta_estado.write_text("{esto no es json", encoding="utf-8")
+    with pytest.raises(ValueError):
+        sesion.cargar_estado(str(ruta_estado))
+
+
+def test_cargar_estado_sin_subobjetivos_lanza_valueerror(sesion, tmp_path):
+    ruta_estado = tmp_path / "tarea.estado.json"
+    ruta_estado.write_text(json.dumps({"otra_cosa": 1}), encoding="utf-8")
+    with pytest.raises(ValueError):
+        sesion.cargar_estado(str(ruta_estado))
+
+
+def test_cargar_estado_intento_danado_lanza_valueerror(sesion, tmp_path):
+    ruta_estado = tmp_path / "tarea.estado.json"
+    escribir_estado(ruta_estado, {"sigmoide": {"intentos": [{"codigo": "x"}]}})
+    with pytest.raises(ValueError):
+        sesion.cargar_estado(str(ruta_estado))
+
+
+def test_cargar_estado_danado_no_cambia_nada(sesion, tmp_path):
+    """Todo o nada: 'sigmoide' está bien, pero 'derivada' está dañado."""
+    ruta_estado = tmp_path / "tarea.estado.json"
+    escribir_estado(ruta_estado, {
+        "sigmoide": {"intentos": [], "completado": True, "maneja_teoria": True},
+        "derivada": {"intentos": [{"subobjetivo_id": "derivada", "codigo": "x",
+                                   "fecha": "no es una fecha"}]},
+    })
+    with pytest.raises(ValueError):
+        sesion.cargar_estado(str(ruta_estado))
+    assert sesion.subobjetivos["sigmoide"].completado is False
+    assert sesion.subobjetivos["sigmoide"].maneja_teoria is None

@@ -22,9 +22,12 @@ Reglas que valen siempre, en todos los momentos:
 2. Antes de ayudar con un subobjetivo, llama a pedir_ayuda y sigue lo que
    devuelve. Lo Permitido y lo Prohibido de ese momento mandan sobre tu propio
    criterio.
-3. Al empezar, carga la tarea con cargar_tarea. En un subobjetivo nuevo,
-   pedir_ayuda te va a pedir el diagnóstico: hazle las dos preguntas al
-   estudiante y guarda sus respuestas con registrar_diagnostico.
+3. Al empezar, carga la tarea con cargar_tarea. Si el estudiante ya la había
+   trabajado, se recupera su progreso: no repitas el diagnóstico de lo que ya
+   respondió. Usa reanudar=False solo si pide explícitamente empezar de cero.
+   En un subobjetivo nuevo, pedir_ayuda te va a pedir el diagnóstico: hazle
+   las dos preguntas al estudiante y guarda sus respuestas con
+   registrar_diagnostico.
 4. En el momento "ejemplo", muestra el código que devuelve ver_ejemplo en vez
    de escribir uno tú. Si la tarea no trae ejemplo oficial, sigue las
    instrucciones del momento para un ejemplo no oficial.
@@ -178,15 +181,35 @@ def guardar_sesion() -> None:
 
 
 @mcp.tool()
-def cargar_tarea(ruta: str) -> str:
-    """Carga una tarea desde un JSON y empieza una sesión nueva.
+def cargar_tarea(ruta: str, reanudar: bool = True) -> str:
+    """Carga una tarea desde un JSON y recupera el progreso guardado, si lo hay.
+
+    Si existe el archivo de estado de la tarea (ver ruta_estado) y reanudar
+    es True, el estudiante sigue donde quedó: intentos, diagnóstico,
+    completados y rescates. Usa reanudar=False solo si el estudiante pide
+    explícitamente empezar de cero.
+
+    Comportamiento:
+        - reanudar=True, sin archivo de estado: sesión nueva. No guarda nada.
+        - reanudar=True, con estado válido: recupera el progreso
+          (SesionTarea.cargar_estado). No guarda nada.
+        - reanudar=True, con estado dañado: sesión nueva, avisando que no se
+          pudo leer el progreso. No guarda (el archivo dañado queda hasta el
+          primer cambio, por si alguien quiere revisarlo).
+        - reanudar=False: sesión nueva y la guarda de inmediato, para que el
+          progreso viejo no vuelva en la próxima carga.
 
     Args:
         ruta: Ruta al JSON de la tarea.
+        reanudar: Si es True (por defecto), recupera el progreso guardado.
 
     Returns:
-        Los subobjetivos (id y descripción) para que el tutor arme la encuesta,
-        o un mensaje claro si el archivo no existe o tiene ids repetidos.
+        Los subobjetivos (id y descripción) para que el tutor arme la encuesta;
+        los completados se marcan con "(completado)" en su línea. Además, si
+        corresponde: que se recuperó el progreso, que no se pudo leer (y se
+        empieza de cero), o qué ids del estado se ignoraron porque ya no están
+        en la tarea. O un mensaje claro si el archivo de la tarea no existe o
+        tiene ids repetidos.
     """
     global sesion 
     try:
@@ -195,13 +218,27 @@ def cargar_tarea(ruta: str) -> str:
         nueva_sesion = SesionTarea(ruta_sesion)
     except (FileNotFoundError, ValueError) as e:
         return f"Error al cargar la tarea: {e}"    
-   
+    aviso = ""
+    try:
+        existe_rutaEstado = os.path.exists(ruta_estado(nueva_sesion.ruta_tarea))
+        rutaeEstado = ruta_estado(nueva_sesion.ruta_tarea)
+        if (reanudar == True and existe_rutaEstado == True):
+            ids_ignorados = nueva_sesion.cargar_estado(rutaeEstado) #no guarda nada
+            aviso = "Se recuperó el progreso guardado.\n"
+            if (len(ids_ignorados) > 0):
+                aviso += f"Se ignoraron porque ya no están en la tarea {", ".join(ids_ignorados)}.\n"
+    except (ValueError) as x:
+        aviso =  "No se pudo leer el progreso guardado; se empieza de cero.\n"
     sesion = nueva_sesion
+    if (reanudar == False):
+            guardar_sesion() #sesióm mueva y se guarda de inmediato
     resultado = "Subobjetivos de la tarea:\n"
     for id_sub, subobjetivo in sesion.subobjetivos.items():
-        resultado += f"- {id_sub}: {subobjetivo.descripcion}\n"
-        
-    return resultado
+        marca = ""
+        if (subobjetivo.completado):
+            marca = "(completado)"
+        resultado += f"- {id_sub}: {subobjetivo.descripcion} {marca} \n"
+    return aviso + resultado
 
 @mcp.tool()
 def registrar_intento(subobjetivo_id: str, codigo: str,

@@ -184,9 +184,10 @@ def test_cargar_fallida_no_borra_la_sesion_anterior(con_tarea, tmp_path):
     assert server.sesion is con_tarea
 
 
-def test_cargar_otra_tarea_empieza_de_cero(con_tarea, ruta_tarea):
+def test_cargar_sin_reanudar_empieza_de_cero(con_tarea, ruta_tarea):
+    """Antes de la recarga se llamaba test_cargar_otra_tarea_empieza_de_cero."""
     server.registrar_intento("sigmoide", "def sigmoide(x): pass")
-    server.cargar_tarea(ruta_tarea)
+    server.cargar_tarea(ruta_tarea, reanudar=False)
     assert server.sesion is not con_tarea
     assert server.sesion.subobjetivos["sigmoide"].intentos == []
 
@@ -882,7 +883,7 @@ def test_guardar_sesion_sin_tarea_no_lanza_error():
 
 
 def test_cargar_no_pisa_un_estado_guardado(con_tarea, ruta_tarea):
-    """Mientras no exista la recarga, cargar no debe borrar el progreso."""
+    """Cargar con reanudar=True (por defecto) no debe borrar el progreso."""
     server.registrar_intento("sigmoide", "def sigmoide(x): pass")
     server.cargar_tarea(ruta_tarea)
     assert len(leer_estado(ruta_tarea)["subobjetivos"]["sigmoide"]["intentos"]) == 1
@@ -975,3 +976,87 @@ def test_entorno_no_cambia_el_estado(con_tarea, ruta_tarea):
 
 def test_entorno_las_instrucciones_del_servidor_la_mencionan():
     assert "ayuda_entorno" in server.INSTRUCCIONES
+
+
+# ---------------------------------------------------------------------------
+# cargar_tarea: recargar el estado guardado
+#
+#     pytest test_server.py -k reanud
+# ---------------------------------------------------------------------------
+
+def test_reanudar_es_parametro_de_la_herramienta():
+    """El LLM solo puede usar reanudar=False si lo ve en el esquema."""
+    h = next(h for h in asyncio.run(server.mcp.list_tools()) if h.name == "cargar_tarea")
+    assert "reanudar" in h.input_schema["properties"]
+
+
+def test_reanudar_recupera_los_intentos(con_tarea, ruta_tarea):
+    server.registrar_intento("sigmoide", "def sigmoide(x): pass")
+    server.cargar_tarea(ruta_tarea)
+    assert server.sesion is not con_tarea
+    assert len(server.sesion.subobjetivos["sigmoide"].intentos) == 1
+
+
+def test_reanudar_recupera_el_diagnostico(con_tarea, ruta_tarea):
+    server.registrar_diagnostico("sigmoide", True, False)
+    server.cargar_tarea(ruta_tarea)
+    assert server.sesion.subobjetivos["sigmoide"].maneja_teoria is True
+
+
+def test_reanudar_marca_los_completados(con_tarea, ruta_tarea):
+    server.marcar_completado("sigmoide")
+    respuesta = server.cargar_tarea(ruta_tarea)
+    linea = next(l for l in respuesta.splitlines() if "sigmoide:" in l)
+    assert "completado" in linea.lower()
+    linea = next(l for l in respuesta.splitlines() if "derivada:" in l)
+    assert "completado" not in linea.lower()
+
+
+def test_reanudar_sin_estado_guardado_no_crea_archivo(ruta_tarea):
+    server.cargar_tarea(ruta_tarea)
+    assert server.sesion is not None
+    assert not os.path.exists(server.ruta_estado(ruta_tarea))
+
+
+def test_reanudar_estado_danado_no_lanza_error(ruta_tarea):
+    with open(server.ruta_estado(ruta_tarea), "w", encoding="utf-8") as f:
+        f.write("{esto no es json")
+    respuesta = server.cargar_tarea(ruta_tarea)
+    assert isinstance(respuesta, str)
+    assert server.sesion is not None
+    assert server.sesion.subobjetivos["sigmoide"].intentos == []
+    assert "progreso" in respuesta.lower()
+
+
+def test_reanudar_estado_danado_no_se_pisa_al_cargar(ruta_tarea):
+    with open(server.ruta_estado(ruta_tarea), "w", encoding="utf-8") as f:
+        f.write("{esto no es json")
+    server.cargar_tarea(ruta_tarea)
+    with open(server.ruta_estado(ruta_tarea), encoding="utf-8") as f:
+        assert f.read() == "{esto no es json"
+
+
+def test_reanudar_avisa_los_ids_ignorados(ruta_tarea):
+    with open(server.ruta_estado(ruta_tarea), "w", encoding="utf-8") as f:
+        json.dump({"subobjetivos": {"viejo": {"intentos": []}}}, f)
+    respuesta = server.cargar_tarea(ruta_tarea)
+    assert "viejo" in respuesta
+    assert "viejo" not in server.sesion.subobjetivos
+
+
+def test_sin_reanudar_pisa_el_estado_guardado(con_tarea, ruta_tarea):
+    """Empezar de cero tiene que ser de verdad: el progreso viejo no vuelve."""
+    server.registrar_intento("sigmoide", "def sigmoide(x): pass")
+    server.cargar_tarea(ruta_tarea, reanudar=False)
+    assert leer_estado(ruta_tarea)["subobjetivos"]["sigmoide"]["intentos"] == []
+    server.cargar_tarea(ruta_tarea)
+    assert server.sesion.subobjetivos["sigmoide"].intentos == []
+
+
+def test_cargar_un_subobjetivo_por_linea(ruta_tarea):
+    """Sin nada completado, cada subobjetivo igual va en su propia línea."""
+    respuesta = server.cargar_tarea(ruta_tarea)
+    lineas = respuesta.splitlines()
+    assert sum("sigmoide:" in l for l in lineas) == 1
+    assert sum("derivada:" in l for l in lineas) == 1
+    assert not any("sigmoide:" in l and "derivada:" in l for l in lineas)
