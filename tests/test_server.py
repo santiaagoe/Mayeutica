@@ -13,6 +13,8 @@ levantar el servidor. Para trabajar una herramienta a la vez:
     pytest tests/test_server.py -k ejecutar
     pytest tests/test_server.py -k leer
     pytest tests/test_server.py -k entorno
+    pytest tests/test_server.py -k leer_fuente
+    pytest tests/test_server.py -k crear
 
 Los tests no exigen frases exactas: revisan que la respuesta sea texto, que no
 se lance una excepción y que el estado de la sesión cambie (o no) como debe.
@@ -1060,3 +1062,225 @@ def test_cargar_un_subobjetivo_por_linea(ruta_tarea):
     assert sum("sigmoide:" in l for l in lineas) == 1
     assert sum("derivada:" in l for l in lineas) == 1
     assert not any("sigmoide:" in l and "derivada:" in l for l in lineas)
+
+
+# ---------------------------------------------------------------------------
+# El servidor arranca al final (if __name__ == "__main__")
+# ---------------------------------------------------------------------------
+
+def test_main_va_al_final_de_server():
+    """mcp.run() se queda corriendo: lo que esté definido después nunca se registra.
+
+    Importar server (como hacen estos tests) no ejecuta el bloque, así que los
+    demás tests no lo detectan. Hay que mirar el archivo.
+    """
+    import ast
+    with open(server.__file__, encoding="utf-8") as f:
+        arbol = ast.parse(f.read())
+    ultimo = arbol.body[-1]
+    assert isinstance(ultimo, ast.If) and "__main__" in ast.unparse(ultimo.test), (
+        "El bloque if __name__ == '__main__' tiene que ser lo último de server.py")
+
+
+# ---------------------------------------------------------------------------
+# leer_fuente y crear_tarea (notebook -> tarea)
+# ---------------------------------------------------------------------------
+
+def celda_nb(tipo, texto, id_celda):
+    celda = {"cell_type": tipo, "id": id_celda, "metadata": {},
+             "source": texto.splitlines(keepends=True)}
+    if tipo == "code":
+        celda["outputs"] = []
+        celda["execution_count"] = None
+    return celda
+
+
+CELDAS_LAB = [
+    celda_nb("markdown", "# Lab de prueba\nPregunta 1: ¿qué es TF-IDF?", "enunciado"),
+    celda_nb("markdown", "**Respuesta:** ...", "resp1"),
+    celda_nb("code", "import numpy as np", "imports"),
+    celda_nb("code", "# TU CÓDIGO AQUÍ", "hueco"),
+]
+
+PROPUESTA = [
+    {"id": "pregunta_1", "descripcion": "Explicar qué es TF-IDF",
+     "celdas": ["enunciado", "resp1"]},
+    {"id": "limpieza", "descripcion": "Implementar la limpieza", "celdas": ["hueco"]},
+]
+
+
+@pytest.fixture
+def notebook(tmp_path):
+    """Ruta (str) a un notebook con una pregunta abierta y un hueco de código."""
+    ruta = tmp_path / "lab.ipynb"
+    contenido = {"cells": CELDAS_LAB, "metadata": {}, "nbformat": 4, "nbformat_minor": 5}
+    ruta.write_text(json.dumps(contenido, ensure_ascii=False), encoding="utf-8")
+    return str(ruta)
+
+
+def json_generado(notebook):
+    return notebook[: -len(".ipynb")] + ".tarea.json"
+
+
+def test_leer_fuente_y_crear_tarea_registradas():
+    nombres = {h.name for h in asyncio.run(server.mcp.list_tools())}
+    assert {"leer_fuente", "crear_tarea"} <= nombres
+
+
+def test_leer_fuente_muestra_tipos_ubicaciones_y_contenido(notebook):
+    respuesta = server.leer_fuente(notebook)
+    for tipo in ("texto", "texto_por_completar", "codigo", "codigo_por_completar"):
+        assert tipo in respuesta
+    for id_celda in ("enunciado", "resp1", "imports", "hueco"):
+        assert id_celda in respuesta
+    assert "¿qué es TF-IDF?" in respuesta
+    assert "# TU CÓDIGO AQUÍ" in respuesta
+
+
+def test_leer_fuente_no_cambia_la_sesion(con_tarea, notebook):
+    server.leer_fuente(notebook)
+    assert server.sesion is con_tarea
+
+
+def test_leer_fuente_sin_tarea_no_carga_nada(notebook):
+    server.leer_fuente(notebook)
+    assert server.sesion is None
+
+
+def test_leer_fuente_trae_lo_ultimo_guardado(notebook):
+    server.leer_fuente(notebook)
+    with open(notebook, encoding="utf-8") as f:
+        datos = json.load(f)
+    datos["cells"][1]["source"] = ["**Respuesta:** pondera la frecuencia"]
+    with open(notebook, "w", encoding="utf-8") as f:
+        json.dump(datos, f)
+    assert "pondera la frecuencia" in server.leer_fuente(notebook)
+
+
+def test_leer_fuente_archivo_inexistente_no_lanza_error(tmp_path):
+    respuesta = server.leer_fuente(str(tmp_path / "no_existe.ipynb"))
+    assert isinstance(respuesta, str) and respuesta.strip()
+
+
+def test_leer_fuente_notebook_roto_no_lanza_error(tmp_path):
+    ruta = tmp_path / "roto.ipynb"
+    ruta.write_text("{esto no es json", encoding="utf-8")
+    assert isinstance(server.leer_fuente(str(ruta)), str)
+
+
+def test_leer_fuente_extension_no_soportada(tmp_path):
+    ruta = tmp_path / "enunciado.pdf"
+    ruta.write_text("hola", encoding="utf-8")
+    respuesta = server.leer_fuente(str(ruta))
+    assert isinstance(respuesta, str)
+    assert ".ipynb" in respuesta
+
+
+def test_leer_fuente_virgulilla_y_espacios(notebook, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert "# TU CÓDIGO AQUÍ" in server.leer_fuente("  ~/lab.ipynb \n")
+
+
+def test_crear_escribe_el_json_junto_al_notebook(notebook):
+    server.crear_tarea(notebook, PROPUESTA)
+    assert os.path.exists(json_generado(notebook))
+
+
+def test_crear_carga_la_tarea(notebook):
+    respuesta = server.crear_tarea(notebook, PROPUESTA)
+    assert server.sesion is not None
+    assert list(server.sesion.subobjetivos) == ["pregunta_1", "limpieza"]
+    assert "pregunta_1" in respuesta and "limpieza" in respuesta
+
+
+def test_crear_responde_la_ruta_del_json(notebook):
+    assert json_generado(notebook) in server.crear_tarea(notebook, PROPUESTA)
+
+
+def test_crear_guarda_las_celdas(notebook):
+    server.crear_tarea(notebook, PROPUESTA)
+    with open(json_generado(notebook), encoding="utf-8") as f:
+        datos = json.load(f)
+    assert datos["subobjetivos"][0]["celdas"] == ["enunciado", "resp1"]
+
+
+def test_crear_se_puede_volver_a_cargar(notebook):
+    server.crear_tarea(notebook, PROPUESTA)
+    server.sesion = None
+    server.cargar_tarea(json_generado(notebook))
+    assert list(server.sesion.subobjetivos) == ["pregunta_1", "limpieza"]
+
+
+def test_crear_virgulilla_y_espacios(notebook, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    server.crear_tarea("  ~/lab.ipynb\n", PROPUESTA)
+    assert os.path.exists(json_generado(notebook))
+
+
+@pytest.mark.parametrize("propuesta, culpable", [
+    ([], None),
+    ([{"id": "p1", "descripcion": "x", "celdas": ["inventada"]}], "inventada"),
+    ([{"id": "p1", "descripcion": "x", "tests": "test_p1.py"}], "tests"),
+    ([{"id": "p1", "descripcion": "x"}, {"id": "p1", "descripcion": "y"}], "p1"),
+    ([{"descripcion": "sin id"}], "id"),
+])
+def test_crear_propuesta_invalida_no_escribe(notebook, con_tarea, propuesta, culpable):
+    respuesta = server.crear_tarea(notebook, propuesta)
+    assert isinstance(respuesta, str)
+    if culpable:
+        assert culpable in respuesta
+    assert not os.path.exists(json_generado(notebook))
+    assert server.sesion is con_tarea
+
+
+def test_crear_notebook_inexistente_no_lanza_error(tmp_path, con_tarea):
+    respuesta = server.crear_tarea(str(tmp_path / "no.ipynb"), PROPUESTA)
+    assert isinstance(respuesta, str)
+    assert server.sesion is con_tarea
+
+
+def test_crear_extension_no_soportada(tmp_path):
+    ruta = tmp_path / "tarea.json"
+    ruta.write_text("{}", encoding="utf-8")
+    respuesta = server.crear_tarea(str(ruta), PROPUESTA)
+    assert ".ipynb" in respuesta
+    assert ruta.read_text(encoding="utf-8") == "{}"
+
+
+def test_crear_no_pisa_una_tarea_existente(notebook):
+    server.crear_tarea(notebook, PROPUESTA)
+    server.sesion = None
+    otra = [{"id": "otra", "descripcion": "Otra cosa"}]
+    respuesta = server.crear_tarea(notebook, otra)
+    assert json_generado(notebook) in respuesta
+    with open(json_generado(notebook), encoding="utf-8") as f:
+        assert [s["id"] for s in json.load(f)["subobjetivos"]] == ["pregunta_1", "limpieza"]
+    assert server.sesion is None
+
+
+def test_crear_reemplazar_rehace_la_tarea(notebook):
+    server.crear_tarea(notebook, PROPUESTA)
+    otra = [{"id": "otra", "descripcion": "Otra cosa"}]
+    server.crear_tarea(notebook, otra, reemplazar=True)
+    assert list(server.sesion.subobjetivos) == ["otra"]
+
+
+def test_crear_reemplazar_conserva_el_progreso_de_lo_que_sigue(notebook):
+    server.crear_tarea(notebook, PROPUESTA)
+    server.registrar_intento("pregunta_1", "Pondera la frecuencia por la rareza")
+    nueva = PROPUESTA + [{"id": "extra", "descripcion": "Un paso más"}]
+    server.crear_tarea(notebook, nueva, reemplazar=True)
+    assert len(server.sesion.subobjetivos["pregunta_1"].intentos) == 1
+    assert server.sesion.subobjetivos["extra"].intentos == []
+
+
+def test_crear_pregunta_abierta_usa_el_ciclo_sin_tests(notebook):
+    """Sin tests: registrar_intento no cuenta como fallo y no lleva a revisión."""
+    server.crear_tarea(notebook, PROPUESTA)
+    for _ in range(FALLOS_PARA_RESCATE):
+        server.registrar_intento("pregunta_1", "Una respuesta")
+    respuesta = server.pedir_ayuda("pregunta_1")
+    assert not es_momento(respuesta, "rescate")
+    assert isinstance(server.ejecutar_tests("pregunta_1"), str)
+    server.marcar_completado("pregunta_1")
+    assert server.sesion.subobjetivos["pregunta_1"].completado

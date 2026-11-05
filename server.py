@@ -2,6 +2,8 @@ from mcp.server.mcpserver import MCPServer
 from estado import SesionTarea, MOMENTOS
 from ejecutor import correr_pytest, ResultadoTests
 from lector import extraer_funcion
+from fuentes import FuenteNotebook
+import generador
 from pathlib import Path
 import entorno
 import os
@@ -58,6 +60,19 @@ Reglas que valen siempre, en todos los momentos:
     programar un subobjetivo, usa ayuda_entorno. No respondas esas preguntas de
     memoria: la herramienta comprueba que no sea una pregunta de la tarea
     disfrazada y te dice cómo responder.
+12. Si el estudiante te da un notebook (.ipynb) en vez de una tarea JSON,
+    léelo con leer_fuente y propón subobjetivos pequeños: uno por cada bloque
+    por completar, con los ids de sus celdas. Si una pregunta y la celda donde
+    se responde están separadas, júntalas en un solo subobjetivo con las dos
+    celdas. Muéstrale la lista y espera a que la confirme o la corrija; recién
+    entonces llama a crear_tarea. No propongas tests ni ejemplos. Si
+    crear_tarea dice que la tarea de ese notebook ya existe, cárgala con
+    cargar_tarea en vez de crearla de nuevo.
+13. En un subobjetivo que viene de un notebook, leer_mi_codigo y
+    ejecutar_tests todavía no sirven: usa leer_fuente para ver lo que el
+    estudiante escribió. Las respuestas escritas (texto_por_completar) no
+    tienen tests: guarda cada respuesta con registrar_intento y usa
+    marcar_completado cuando el estudiante diga que terminó.
 """
 
 # Cómo responder una pregunta de entorno. ayuda_entorno lo devuelve cuando la
@@ -162,8 +177,6 @@ def ruta_estado(ruta_tarea: str) -> str:
     nuevo_rt = rt.with_suffix(".estado.json")
     return str(nuevo_rt)
     
-
-
 
 def guardar_sesion() -> None:
     """Guarda la sesión activa en su archivo de estado.
@@ -289,7 +302,6 @@ def registrar_diagnostico(subobjetivo_id: str, maneja_teoria: bool,
     instrucciones = formatear_momento(momento_inicial)
     guardar_sesion()
     return f"El momento por el que empieza el ciclo es {momento_inicial} y las instrucciones son:\n{instrucciones}"
-
 
 
 @mcp.tool()
@@ -496,8 +508,117 @@ def ejecutar_tests(subobjetivo_id: str) -> str:
 
 
 
-if __name__ == "__main__":
-    mcp.run()
+@mcp.tool()
+def leer_fuente(ruta: str) -> str:
+    """Muestra el contenido de un notebook (.ipynb) como bloques, para partirlo en subobjetivos.
+
+    Úsala cuando el estudiante te dé un notebook en vez de una tarea JSON, y
+    después para ver lo que escribió en un subobjetivo que viene de un
+    notebook. Lee el archivo cada vez que se llama (trae la versión guardada
+    más reciente) y no cambia la sesión: no carga ni crea ninguna tarea.
+
+    Cada bloque viene con su tipo y su ubicación (el id de la celda). Los
+    tipos son: "texto" (enunciado), "codigo" (código ya dado),
+    "codigo_por_completar" (donde el estudiante programa) y
+    "texto_por_completar" (donde escribe una respuesta). Los ids son los que
+    van en "celdas" al llamar a crear_tarea; un bloque "sin ubicación" no se
+    puede usar ahí.
+
+    Comportamiento:
+        - Limpia la ruta como cargar_tarea (espacios alrededor y "~").
+        - Solo acepta .ipynb; con otra extensión responde qué formatos hay.
+        - Lee con FuenteNotebook y arma el texto con
+          generador.formatear_bloques, precedido de la ruta del notebook.
+
+    Args:
+        ruta: Ruta al notebook.
+
+    Returns:
+        Los bloques del notebook, en orden. O un mensaje si la extensión no
+        es .ipynb, el archivo no existe o no es un notebook válido.
+    """
+    ruta_limpia = os.path.expanduser(ruta.strip())
+    if (not ruta_limpia.endswith(".ipynb")):
+        return "Solo se aceptan archivos .ipynb"
+    fuente = FuenteNotebook(ruta_limpia)
+    try:
+        bloques = fuente.leer()
+    except (FileNotFoundError) as e:
+        return f"El archivo no existe: {e}"
+    except (ValueError) as e:
+        return f"El archivo no es un notebook válido: {e}"
+    texto_formateado = generador.formatear_bloques(bloques)
+    devolver = "Ruta: " + ruta_limpia + "\n\n" + texto_formateado
+    return devolver
+
+
+@mcp.tool()
+def crear_tarea(ruta: str, subobjetivos: list[dict],
+                reemplazar: bool = False) -> str:
+    """Crea la tarea de un notebook con los subobjetivos confirmados y la carga.
+
+    Llámala solo después de mostrarle al estudiante la lista de subobjetivos
+    y que la confirme. Cada subobjetivo es un diccionario con:
+        - "id": nombre corto, único, sin espacios (por ejemplo, "pregunta_1").
+        - "descripcion": qué tiene que lograr el estudiante en ese paso.
+        - "celdas" (opcional): lista con los ids de celda (de leer_fuente)
+          donde el estudiante escribe ese paso.
+    No se aceptan otras claves: ni "tests" ni "ejemplo".
+
+    Pasos:
+        1. Limpia la ruta (como cargar_tarea) y exige .ipynb.
+        2. Lee el notebook con FuenteNotebook. Las ubicaciones válidas son
+           las de sus bloques (sin los None).
+        3. generador.validar_subobjetivos. Si hay problemas, responde con
+           todos y no escribe nada.
+        4. Si el JSON (generador.ruta_tarea_generada) ya existe y reemplazar
+           es False, responde que ya existe, con su ruta, y no escribe nada:
+           así no se pierde una tarea que el estudiante ya está trabajando.
+        5. generador.escribir_tarea y después cargar_tarea con ese JSON
+           (reanudar=True: si se reemplazó una tarea con progreso, los
+           subobjetivos que siguen existiendo lo conservan).
+
+    Si algo falla, la sesión anterior queda como estaba.
+
+    Args:
+        ruta: Ruta al notebook.
+        subobjetivos: La lista confirmada por el estudiante.
+        reemplazar: True solo si el estudiante pide rehacer los subobjetivos
+            de un notebook que ya tenía tarea.
+
+    Returns:
+        La ruta del JSON creado y la respuesta de cargar_tarea (los
+        subobjetivos). O un mensaje con lo que hay que corregir.
+    """
+    ruta_limpia = os.path.expanduser(ruta.strip())
+    if (not ruta_limpia.endswith(".ipynb")):
+        return "Solo se aceptan archivos .ipynb"
+    fuente = FuenteNotebook(ruta_limpia)
+    try:
+        bloques = fuente.leer()
+    except (FileNotFoundError) as e:
+        return f"El archivo no existe: {e}"
+    except (ValueError) as e:
+        return f"El archivo no es un notebook válido: {e}"
+    ubicaciones_validas = set()
+    for bloque in bloques:
+        if (bloque.ubicacion is not None):
+            ubicaciones_validas.add(bloque.ubicacion)
+    problemas = generador.validar_subobjetivos(subobjetivos, ubicaciones_validas)
+    if (len(problemas) > 0):
+        mensaje_problemas = "\n".join(problemas)
+        return "Hay problemas con los subobjetivos:\n" + mensaje_problemas
+    ruta_json = generador.ruta_tarea_generada(ruta_limpia)
+    if (os.path.exists(ruta_json)):
+        if (reemplazar == False):
+            return (f"La tarea de este notebook ya existe en: {ruta_json}. "
+                    "Para retomarla, cárgala con cargar_tarea usando esa ruta. "
+                    "Usa reemplazar=True solo si el estudiante pide explícitamente "
+                    "rehacer los subobjetivos.")
+    generador.escribir_tarea(ruta_json, ruta_limpia, subobjetivos)
+    respuesta_carga = cargar_tarea(ruta_json, reanudar=True)
+    devolver = "Ruta del JSON creado: " + ruta_json + "\n\n" + respuesta_carga
+    return devolver
 
 
 @mcp.tool()
@@ -534,3 +655,8 @@ def ayuda_entorno(pregunta: str) -> str:
         return f"Coincide con el subobjetivo {coincide}. Ve a pedir_ayuda"
     else:
         return INSTRUCCIONES_ENTORNO
+
+# Ahora main va al final, de modo que todas las herramientas estén
+# definidas antes de que el servidor empiece a escuchar.
+if __name__ == "__main__":
+    mcp.run()
