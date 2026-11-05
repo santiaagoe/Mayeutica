@@ -250,8 +250,8 @@ def test_carga_funcion_no_se_trata_como_ruta(tmp_path):
 # ---------------------------------------------------------------------------
 # Recargar el estado: Intento.desde_dict y cargar_estado
 #
-#     pytest test_estado.py -k desde_dict
-#     pytest test_estado.py -k cargar_estado
+#     pytest tests/test_estado.py -k desde_dict
+#     pytest tests/test_estado.py -k cargar_estado
 # ---------------------------------------------------------------------------
 
 def ida_y_vuelta(intento):

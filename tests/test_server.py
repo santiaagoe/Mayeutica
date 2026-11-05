@@ -4,15 +4,15 @@ Prueban las herramientas MCP llamándolas como funciones normales de Python:
 el decorador @mcp.tool() devuelve la función original, así que no hace falta
 levantar el servidor. Para trabajar una herramienta a la vez:
 
-    pytest test_server.py -k instrucciones_servidor
-    pytest test_server.py -k formatear
-    pytest test_server.py -k revision
-    pytest test_server.py -k diagnostico
-    pytest test_server.py -k ayuda
-    pytest test_server.py -k ver_ejemplo
-    pytest test_server.py -k ejecutar
-    pytest test_server.py -k leer
-    pytest test_server.py -k entorno
+    pytest tests/test_server.py -k instrucciones_servidor
+    pytest tests/test_server.py -k formatear
+    pytest tests/test_server.py -k revision
+    pytest tests/test_server.py -k diagnostico
+    pytest tests/test_server.py -k ayuda
+    pytest tests/test_server.py -k ver_ejemplo
+    pytest tests/test_server.py -k ejecutar
+    pytest tests/test_server.py -k leer
+    pytest tests/test_server.py -k entorno
 
 Los tests no exigen frases exactas: revisan que la respuesta sea texto, que no
 se lance una excepción y que el estado de la sesión cambie (o no) como debe.
@@ -981,7 +981,7 @@ def test_entorno_las_instrucciones_del_servidor_la_mencionan():
 # ---------------------------------------------------------------------------
 # cargar_tarea: recargar el estado guardado
 #
-#     pytest test_server.py -k reanud
+#     pytest tests/test_server.py -k reanud
 # ---------------------------------------------------------------------------
 
 def test_reanudar_es_parametro_de_la_herramienta():

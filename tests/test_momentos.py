@@ -3,12 +3,12 @@
 Cada grupo corresponde a un paso. Para trabajar uno a la vez, corre solo sus
 tests con -k:
 
-    pytest test_momentos.py -k ejemplo       # paso A: campo "ejemplo" en la tarea
-    pytest test_momentos.py -k fallidos      # paso B: intentos que pasan o fallan
-    pytest test_momentos.py -k diagnostico   # paso C: encuesta inicial
-    pytest test_momentos.py -k revision      # paso D: revisión que escala
-    pytest test_momentos.py -k rescate       # paso E: rescate tras 3 fallos
-    pytest test_momentos.py -k tabla         # paso F: el diccionario MOMENTOS
+    pytest tests/test_momentos.py -k ejemplo       # paso A: campo "ejemplo" en la tarea
+    pytest tests/test_momentos.py -k fallidos      # paso B: intentos que pasan o fallan
+    pytest tests/test_momentos.py -k diagnostico   # paso C: encuesta inicial
+    pytest tests/test_momentos.py -k revision      # paso D: revisión que escala
+    pytest tests/test_momentos.py -k rescate       # paso E: rescate tras 3 fallos
+    pytest tests/test_momentos.py -k tabla         # paso F: el diccionario MOMENTOS
 
 Al principio casi todos fallan: es lo esperado.
 

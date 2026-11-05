@@ -2,10 +2,10 @@
 
 Una función a la vez:
 
-    pytest test_fuentes.py -k bloque    (ya pasan: Bloque y Fuente vienen hechos)
-    pytest test_fuentes.py -k source
-    pytest test_fuentes.py -k tipo
-    pytest test_fuentes.py -k leer
+    pytest tests/test_fuentes.py -k bloque    (ya pasan: Bloque y Fuente vienen hechos)
+    pytest tests/test_fuentes.py -k source
+    pytest tests/test_fuentes.py -k tipo
+    pytest tests/test_fuentes.py -k leer
 
 Ojo con -k: filtra por subcadena del nombre. Cada grupo lleva su palabra y
 ningún test de otro grupo la lleva.

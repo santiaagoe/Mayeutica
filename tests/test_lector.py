@@ -1,6 +1,6 @@
 """Tests de lector.py.
 
-    pytest test_lector.py
+    pytest tests/test_lector.py
 """
 
 import pytest

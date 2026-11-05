@@ -4,7 +4,7 @@ Cada test arma en una carpeta temporal un "código del estudiante" y su archivo
 de tests, y revisa lo que devuelve correr_pytest. Son más lentos que los otros
 porque cada uno lanza pytest en un proceso aparte.
 
-    pytest test_ejecutor.py
+    pytest tests/test_ejecutor.py
 """
 
 import time

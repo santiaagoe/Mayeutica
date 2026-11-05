@@ -13,8 +13,8 @@ cerrar. Ante la duda, coincidir.
 
 Para trabajarlo paso a paso:
 
-    pytest test_entorno.py -k normalizar
-    pytest test_entorno.py -k coincide
+    pytest tests/test_entorno.py -k normalizar
+    pytest tests/test_entorno.py -k coincide
 """
 
 from estado import Subobjetivo

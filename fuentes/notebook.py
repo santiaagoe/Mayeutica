@@ -15,9 +15,9 @@ Python puro, sin MCP ni LLM (como estado.py).
 
 Para trabajarlo paso a paso:
 
-    pytest test_fuentes.py -k source
-    pytest test_fuentes.py -k tipo
-    pytest test_fuentes.py -k leer
+    pytest tests/test_fuentes.py -k source
+    pytest tests/test_fuentes.py -k tipo
+    pytest tests/test_fuentes.py -k leer
 """
 
 from pathlib import Path

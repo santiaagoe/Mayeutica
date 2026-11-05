@@ -2,8 +2,8 @@
 
 Una función a la vez:
 
-    pytest test_entorno.py -k normalizar
-    pytest test_entorno.py -k coincide
+    pytest tests/test_entorno.py -k normalizar
+    pytest tests/test_entorno.py -k coincide
 
 Ojo con -k: filtra por subcadena del nombre. Todos los tests de la segunda
 función llevan "coincide" y ninguno de la primera lo lleva, para que no se
