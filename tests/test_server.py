@@ -15,6 +15,7 @@ levantar el servidor. Para trabajar una herramienta a la vez:
     pytest tests/test_server.py -k entorno
     pytest tests/test_server.py -k leer_fuente
     pytest tests/test_server.py -k crear
+    pytest tests/test_server.py -k encuesta
 
 Los tests no exigen frases exactas: revisan que la respuesta sea texto, que no
 se lance una excepción y que el estado de la sesión cambie (o no) como debe.
@@ -1284,3 +1285,103 @@ def test_crear_pregunta_abierta_usa_el_ciclo_sin_tests(notebook):
     assert isinstance(server.ejecutar_tests("pregunta_1"), str)
     server.marcar_completado("pregunta_1")
     assert server.sesion.subobjetivos["pregunta_1"].completado
+
+
+# ---------------------------------------------------------------------------
+# Encuesta inicial (5 nov): instrucciones_encuesta y cargar_tarea
+# ---------------------------------------------------------------------------
+
+def bloque_encuesta(respuesta):
+    """Lo que viene después de INSTRUCCIONES_ENCUESTA en la respuesta, o None."""
+    if server.INSTRUCCIONES_ENCUESTA not in respuesta:
+        return None
+    return respuesta.split(server.INSTRUCCIONES_ENCUESTA, 1)[1]
+
+
+def test_encuesta_instrucciones_son_texto():
+    assert isinstance(server.INSTRUCCIONES_ENCUESTA, str)
+    assert "registrar_diagnostico" in server.INSTRUCCIONES_ENCUESTA
+
+
+def test_encuesta_no_es_herramienta():
+    nombres = {h.name for h in asyncio.run(server.mcp.list_tools())}
+    assert "instrucciones_encuesta" not in nombres
+
+
+def test_encuesta_sin_sesion_es_none():
+    assert server.instrucciones_encuesta() is None
+
+
+def test_encuesta_con_pendientes_nombra_los_ids(con_tarea):
+    texto = server.instrucciones_encuesta()
+    assert server.INSTRUCCIONES_ENCUESTA in texto
+    assert "sigmoide" in bloque_encuesta(texto)
+    assert "derivada" in bloque_encuesta(texto)
+
+
+def test_encuesta_todos_diagnosticados_es_none(con_tarea):
+    server.registrar_diagnostico("sigmoide", True, True)
+    server.registrar_diagnostico("derivada", False, False)
+    assert server.instrucciones_encuesta() is None
+
+
+def test_encuesta_no_cambia_la_sesion(con_tarea, ruta_tarea):
+    server.instrucciones_encuesta()
+    assert not os.path.exists(server.ruta_estado(ruta_tarea))
+
+
+def test_encuesta_va_en_cargar_tarea_nueva(ruta_tarea):
+    bloque = bloque_encuesta(server.cargar_tarea(ruta_tarea))
+    assert bloque is not None
+    assert "sigmoide" in bloque and "derivada" in bloque
+
+
+def test_encuesta_va_despues_de_la_lista(ruta_tarea):
+    respuesta = server.cargar_tarea(ruta_tarea)
+    assert respuesta.index("Implementar la derivada") < respuesta.index(
+        server.INSTRUCCIONES_ENCUESTA)
+
+
+def test_encuesta_no_se_repite_al_retomar(con_tarea, ruta_tarea):
+    server.registrar_diagnostico("sigmoide", True, True)
+    server.registrar_diagnostico("derivada", True, False)
+    assert bloque_encuesta(server.cargar_tarea(ruta_tarea)) is None
+
+
+def test_encuesta_al_retomar_solo_los_que_faltan(con_tarea, ruta_tarea):
+    server.registrar_diagnostico("sigmoide", True, True)
+    bloque = bloque_encuesta(server.cargar_tarea(ruta_tarea))
+    assert "derivada" in bloque
+    assert "sigmoide" not in bloque
+
+
+def test_encuesta_sin_reanudar_vuelve_a_preguntar_todo(con_tarea, ruta_tarea):
+    server.registrar_diagnostico("sigmoide", True, True)
+    bloque = bloque_encuesta(server.cargar_tarea(ruta_tarea, reanudar=False))
+    assert "sigmoide" in bloque and "derivada" in bloque
+
+
+def test_encuesta_completados_no_entran(con_tarea, ruta_tarea):
+    server.marcar_completado("sigmoide")
+    bloque = bloque_encuesta(server.cargar_tarea(ruta_tarea))
+    assert "derivada" in bloque
+    assert "sigmoide" not in bloque
+
+
+def test_encuesta_carga_fallida_no_la_trae(tmp_path):
+    respuesta = server.cargar_tarea(str(tmp_path / "no_existe.json"))
+    assert server.INSTRUCCIONES_ENCUESTA not in respuesta
+
+
+def test_encuesta_va_en_crear_tarea(notebook):
+    bloque = bloque_encuesta(server.crear_tarea(notebook, PROPUESTA))
+    assert "pregunta_1" in bloque and "limpieza" in bloque
+
+
+def test_encuesta_instrucciones_servidor_la_mencionan():
+    assert "encuesta" in server.INSTRUCCIONES.lower()
+
+
+def test_encuesta_momento_diagnostico_es_el_respaldo():
+    assert "encuesta" in MOMENTOS["diagnostico"]["permitido"].lower()
+    assert "registrar_diagnostico" in MOMENTOS["diagnostico"]["permitido"]

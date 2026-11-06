@@ -27,10 +27,10 @@ CAMPOS_PROGRESO = ("maneja_teoria", "maneja_codigo", "completado", "rescatado")
 MOMENTOS: dict[str, dict[str, str]] = {
     "diagnostico": {
         "permitido": (
-            "Hazle al estudiante dos preguntas rápidas de sí o no sobre este "
-            "subobjetivo: si maneja la teoría y si sabe implementarlo en código. "
-            "Confía en lo que responda y llama a registrar_diagnostico con sus "
-            "respuestas."
+            "Este subobjetivo quedó fuera de la encuesta inicial. Hazle al "
+            "estudiante dos preguntas rápidas de sí o no solo sobre él: si "
+            "maneja la teoría y si sabe implementarlo en código. Confía en lo "
+            "que responda y llama a registrar_diagnostico con sus respuestas."
         ),
         "prohibido": (
             "No expliques teoría ni muestres código antes de tener sus respuestas. "
@@ -372,6 +372,31 @@ class SesionTarea:
         subobjetivo.maneja_teoria = maneja_teoria
         subobjetivo.maneja_codigo = maneja_codigo
         
+    def pendientes_de_encuesta(self) -> list[str]:
+        """Dice qué subobjetivos tienen que entrar en la encuesta inicial.
+
+        Un subobjetivo está pendiente si no tiene diagnóstico y no está
+        completado. "Sin diagnóstico" es el mismo criterio que usa
+        momento_inicial para devolver "diagnostico": maneja_teoria es None.
+        Un subobjetivo completado no se pregunta aunque nunca se haya
+        diagnosticado (no hay nada que enseñar ahí).
+
+        No cambia nada: solo consulta. La usa cargar_tarea (a través de
+        server.instrucciones_encuesta) para pedir la encuesta al empezar y
+        para no repetirla al retomar una tarea ya encuestada.
+
+        Returns:
+            Los ids pendientes, en el orden de la tarea. Vacía si no queda
+            ninguno.
+        """
+        pendientes = []
+        for subobjetivo in self.subobjetivos.values():
+            completado = subobjetivo.completado
+            diagnostico = self.momento_inicial(subobjetivo.id)
+            if (diagnostico == "diagnostico" and  completado == False): #no diag y no completado
+                pendientes.append(subobjetivo.id)
+        return pendientes
+
     def momento_inicial(self, subobjetivo_id: str) -> str:
         """Decide por dónde empieza el ciclo, según el diagnóstico.
 

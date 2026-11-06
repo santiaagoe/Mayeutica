@@ -9,6 +9,7 @@ tests con -k:
     pytest tests/test_momentos.py -k revision      # paso D: revisión que escala
     pytest tests/test_momentos.py -k rescate       # paso E: rescate tras 3 fallos
     pytest tests/test_momentos.py -k tabla         # paso F: el diccionario MOMENTOS
+    pytest tests/test_momentos.py -k encuesta      # 5 nov: encuesta inicial de toda la tarea
 
 Al principio casi todos fallan: es lo esperado.
 
@@ -350,3 +351,60 @@ def test_tabla_los_momentos_que_devuelve_el_arbitro_existen(sesion):
         con_fallos(sesion, "derivada", 1)
         devueltos.add(sesion.momento_revision("derivada"))
     assert devueltos <= set(estado.MOMENTOS.keys())
+
+
+# ---------------------------------------------------------------------------
+# Encuesta inicial (5 nov): pendientes_de_encuesta
+# ---------------------------------------------------------------------------
+
+def test_encuesta_sesion_nueva_todos_pendientes(sesion):
+    assert sesion.pendientes_de_encuesta() == ["sigmoide", "derivada"]
+
+
+def test_encuesta_devuelve_lista_de_strings(sesion):
+    pendientes = sesion.pendientes_de_encuesta()
+    assert isinstance(pendientes, list)
+    assert all(isinstance(p, str) for p in pendientes)
+
+
+def test_encuesta_diagnosticado_ya_no_esta(sesion):
+    sesion.registrar_diagnostico("sigmoide", maneja_teoria=False, maneja_codigo=False)
+    assert sesion.pendientes_de_encuesta() == ["derivada"]
+
+
+def test_encuesta_respuesta_no_cuenta_como_pendiente(sesion):
+    """Responder "no" también es un diagnóstico: False no es None."""
+    sesion.registrar_diagnostico("derivada", maneja_teoria=False, maneja_codigo=False)
+    assert "derivada" not in sesion.pendientes_de_encuesta()
+
+
+def test_encuesta_todos_diagnosticados_lista_vacia(sesion):
+    sesion.registrar_diagnostico("sigmoide", maneja_teoria=True, maneja_codigo=True)
+    sesion.registrar_diagnostico("derivada", maneja_teoria=True, maneja_codigo=False)
+    assert sesion.pendientes_de_encuesta() == []
+
+
+def test_encuesta_completado_sin_diagnostico_no_se_pregunta(sesion):
+    sesion.marcar_completado("sigmoide")
+    assert sesion.pendientes_de_encuesta() == ["derivada"]
+
+
+def test_encuesta_mismo_criterio_que_momento_inicial(sesion):
+    """Pendiente de encuesta <=> momento_inicial dice "diagnostico" (si no está completado)."""
+    sesion.registrar_diagnostico("sigmoide", maneja_teoria=True, maneja_codigo=False)
+    for id_sub in sesion.subobjetivos:
+        en_diagnostico = sesion.momento_inicial(id_sub) == "diagnostico"
+        assert (id_sub in sesion.pendientes_de_encuesta()) == en_diagnostico
+
+
+def test_encuesta_no_cambia_la_sesion(sesion, tmp_path):
+    antes = guardar_y_leer(sesion, tmp_path)
+    sesion.pendientes_de_encuesta()
+    assert guardar_y_leer(sesion, tmp_path) == antes
+
+
+def test_encuesta_respeta_el_orden_de_la_tarea(tmp_path):
+    ruta = tmp_path / "tarea.json"
+    ids = ["zeta", "alfa", "medio"]
+    escribir_tarea(ruta, [{"id": i, "descripcion": i} for i in ids])
+    assert SesionTarea(str(ruta)).pendientes_de_encuesta() == ids

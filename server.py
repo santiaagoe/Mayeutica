@@ -27,9 +27,11 @@ Reglas que valen siempre, en todos los momentos:
 3. Al empezar, carga la tarea con cargar_tarea. Si el estudiante ya la había
    trabajado, se recupera su progreso: no repitas el diagnóstico de lo que ya
    respondió. Usa reanudar=False solo si pide explícitamente empezar de cero.
-   En un subobjetivo nuevo, pedir_ayuda te va a pedir el diagnóstico: hazle
-   las dos preguntas al estudiante y guarda sus respuestas con
-   registrar_diagnostico.
+   Si la respuesta de cargar_tarea (o de crear_tarea) trae una encuesta
+   inicial, hazla antes que cualquier otra cosa, siguiendo sus instrucciones.
+   Si más adelante pedir_ayuda te pide el diagnóstico de un subobjetivo, es
+   porque quedó fuera de la encuesta: pregunta solo por ese y guarda las
+   respuestas con registrar_diagnostico.
 4. En el momento "ejemplo", muestra el código que devuelve ver_ejemplo en vez
    de escribir uno tú. Si la tarea no trae ejemplo oficial, sigue las
    instrucciones del momento para un ejemplo no oficial.
@@ -90,6 +92,26 @@ ciclo.
 - Si en medio de la respuesta aparece algo que sí es parte de un subobjetivo
   (por ejemplo, cómo normalizar los datos), no lo resuelvas: vuelve a
   pedir_ayuda.
+"""
+
+# La encuesta inicial (el paso 3 del plan: "encuesta de dos columnas"). Va al
+# final de la respuesta de cargar_tarea si quedan subobjetivos sin diagnóstico
+# (ver instrucciones_encuesta). Las dos columnas son las dos preguntas del
+# diagnóstico; el momento "diagnostico" queda como respaldo para los que se
+# salten la encuesta.
+INSTRUCCIONES_ENCUESTA = """\
+Encuesta inicial. Antes de empezar con cualquier subobjetivo, muéstrale al
+estudiante una tabla con una fila por cada subobjetivo de la lista de abajo y
+dos columnas: "¿Lo entiendes?" (la teoría) y "¿Sabes programarlo?" (el
+código). Pídele que la responda entera de una vez, con sí o no en cada
+casilla. Confía en lo que responda y llama a registrar_diagnostico una vez
+por fila. Recién después, elige con él por dónde empezar y llama a
+pedir_ayuda para ese subobjetivo.
+
+No expliques teoría, no muestres código y no le tomes una prueba antes de
+tener la tabla: la encuesta tiene que ser rápida. Si un subobjetivo es una
+pregunta escrita (sin código), la segunda columna se refiere a si sabe
+redactar la respuesta.
 """
 
 mcp = MCPServer("mayeutica", instructions=INSTRUCCIONES)
@@ -168,6 +190,38 @@ def instrucciones_revision(subobjetivo_id: str) -> str | None:
     return formatear_momento(momento)
 
 
+def instrucciones_encuesta() -> str | None:
+    """Devuelve el bloque de la encuesta inicial, o None si no hace falta.
+
+    No es una herramienta MCP. La usa cargar_tarea al final de su respuesta
+    (y así también crear_tarea, que llama a cargar_tarea).
+
+    Pasos:
+        1. Si no hay sesión, devuelve None.
+        2. Pide los ids con sesion.pendientes_de_encuesta(). Si no hay
+           ninguno, devuelve None: la encuesta no se repite al retomar.
+        3. Si hay, devuelve INSTRUCCIONES_ENCUESTA seguido de una línea con
+           los ids pendientes separados por coma. Formato sugerido:
+
+               <INSTRUCCIONES_ENCUESTA>
+               Subobjetivos de la encuesta: sigmoide, derivada
+
+           Solo los ids, sin descripción ni ":" (las descripciones ya están
+           en la lista de cargar_tarea, y test_cargar_un_subobjetivo_por_linea
+           cuenta las líneas con "id:").
+
+    Returns:
+        El texto de la encuesta, o None.
+    """
+    if(sesion is None):
+        return None
+    ids = sesion.pendientes_de_encuesta()
+    if (ids == []): #vacio
+        return None
+    else:
+        return f"{INSTRUCCIONES_ENCUESTA}\nSubobjetivos de la encuesta: {",".join(ids)}"
+
+
 def ruta_estado(ruta_tarea: str) -> str:
     """Devuelve la ruta del archivo de estado de una tarea.
 
@@ -217,8 +271,10 @@ def cargar_tarea(ruta: str, reanudar: bool = True) -> str:
         reanudar: Si es True (por defecto), recupera el progreso guardado.
 
     Returns:
-        Los subobjetivos (id y descripción) para que el tutor arme la encuesta;
-        los completados se marcan con "(completado)" en su línea. Además, si
+        Los subobjetivos (id y descripción); los completados se marcan con
+        "(completado)" en su línea. Al final, si quedan subobjetivos sin
+        diagnóstico, el bloque de instrucciones_encuesta (separado de la lista
+        por una línea en blanco). Además, si
         corresponde: que se recuperó el progreso, que no se pudo leer (y se
         empieza de cero), o qué ids del estado se ignoraron porque ya no están
         en la tarea. O un mensaje claro si el archivo de la tarea no existe o
@@ -251,6 +307,9 @@ def cargar_tarea(ruta: str, reanudar: bool = True) -> str:
         if (subobjetivo.completado):
             marca = "(completado)"
         resultado += f"- {id_sub}: {subobjetivo.descripcion} {marca} \n"
+    instrucciones = instrucciones_encuesta()
+    if (instrucciones is not None):
+        resultado += instrucciones    
     return aviso + resultado
 
 @mcp.tool()
